@@ -524,18 +524,45 @@
 
 <script>
 /* ============================================================
-   CONTROLE FINANCEIRO — app de página única, autossuficiente
+   CONTROLE FINANCEIRO
+   Aplicativo de finanças pessoais em arquivo único.
+
+   Organização deste arquivo:
+     1. Configuração e catálogos
+     2. Estado e persistência
+     3. Formatação e utilitários
+     4. Cálculos (resumos do mês, saldos, categorias)
+     5. Telas
+     6. Formulários de lançamento
+     7. Ajustes do app
+     8. Navegação
+     9. Inicialização
+
+   Convenções: nomes de código em inglês, comentários em português.
+   Nada aqui depende de bibliotecas externas — os gráficos são SVG
+   montado na mão e os dados ficam no próprio aparelho.
    ============================================================ */
 
-/* ---------- Persistência (localStorage com fallback em memória) ---------- */
-const KEY='controleFinanceiroV9';
-const store={
-  save(d){ try{localStorage.setItem(KEY,JSON.stringify(d));}catch(e){window.__mem=JSON.parse(JSON.stringify(d));} },
-  load(){ try{const d=localStorage.getItem(KEY);return d?JSON.parse(d):null;}catch(e){return window.__mem||null;} }
+/* ---------------------------------------------------------------
+   2. ESTADO E PERSISTÊNCIA
+   --------------------------------------------------------------- */
+
+/* Observação:
+   O localStorage é bloqueado em algumas situações (aba anônima,
+   WebView com cookies desativados). Em vez de deixar o app quebrar,
+   o objeto abaixo cai para um armazenamento em memória: o usuário
+   perde os dados ao fechar, mas o app continua funcionando. */
+const STORAGE_KEY='controleFinanceiroV9';
+const storage={
+  save(d){ try{localStorage.setItem(STORAGE_KEY,JSON.stringify(d));}catch(e){window.__mem=JSON.parse(JSON.stringify(d));} },
+  load(){ try{const d=localStorage.getItem(STORAGE_KEY);return d?JSON.parse(d):null;}catch(e){return window.__mem||null;} }
 };
 
-/* ---------- Catálogo ---------- */
-const CAT_DESPESA={
+/* ---------------------------------------------------------------
+   1. CONFIGURAÇÃO E CATÁLOGOS
+   Categorias, carteiras e as regras que ligam uma coisa à outra.
+   --------------------------------------------------------------- */
+const EXPENSE_CATEGORIES={
   Moradia:{e:'🏠',c:'#3b82f6'}, Mercado:{e:'🛒',c:'#ef4444'}, Farmácia:{e:'💊',c:'#14b8a6'},
   Educação:{e:'📚',c:'#6366f1'}, Saúde:{e:'⚕️',c:'#06b6d4'}, Combustível:{e:'⛽',c:'#f59e0b'},
   Uber:{e:'🚗',c:'#0ea5e9'}, Restaurante:{e:'🍴',c:'#ec4899'}, Lazer:{e:'🎮',c:'#8b5cf6'},
@@ -543,32 +570,33 @@ const CAT_DESPESA={
   Energia:{e:'⚡',c:'#eab308'}, Telefone:{e:'📱',c:'#64748b'}, Transporte:{e:'🚌',c:'#f97316'},
   'Cartão de Crédito/Débito':{e:'💳',c:'#8b5cf6'}, Outros:{e:'📦',c:'#94a3b8'}
 };
-const CAT_RECEITA={
+const INCOME_CATEGORIES={
   Salário:{e:'💼',c:'#16a34a'}, 'R$ Extras':{e:'✨',c:'#0d9488'}, 'Vale Alimentação':{e:'🍽️',c:'#f97316'},
   'Vale Transporte':{e:'🚌',c:'#f59e0b'}
 };
 /* Categoria de despesa -> carteira sugerida (nome) */
-const SUGGEST={ Mercado:'Vale Alimentação', Transporte:'Vale Transporte' };
+const SUGGESTED_SOURCE={ Mercado:'Vale Alimentação', Transporte:'Vale Transporte' };
 /* Entrada: categoria -> carteira de destino (não há mais campo manual) */
-const INCOME_WALLET={ 'Salário':'banco', 'R$ Extras':'banco', 'Vale Alimentação':'va', 'Vale Transporte':'vt' };
+const INCOME_TARGET_WALLET={ 'Salário':'banco', 'R$ Extras':'banco', 'Vale Alimentação':'va', 'Vale Transporte':'vt' };
 /* Carteiras de benefício não entram no Saldo Total */
-const NO_TOTAL_WALLETS=['va','vt'];
+const BENEFIT_WALLETS=['va','vt'];
 /* Despesa: categorias que abrem o seletor "Descontar de" */
-const SPECIAL_DESPESA=['Mercado','Transporte','Combustível'];
-const DESCONTAR_OPTS=[
+const EXPENSES_WITH_SOURCE=['Mercado','Transporte','Combustível'];
+const PAYMENT_SOURCES=[
   {key:'sal',     label:'💼 Salário normal',   wallet:'banco'},
   {key:'ext',     label:'✨ Extras',           wallet:'banco'},
   {key:'valim',   label:'🍽️ Vale Alimentação', wallet:'va'},
   {key:'vtransp', label:'🚌 Vale Transporte',  wallet:'vt'}
 ];
 
-/* ---------- Dados iniciais (exemplo brasileiro, pra abrir “vivo”) ---------- */
-function defaultData(){
+/* Estrutura inicial usada na primeira vez que o app abre. */
+// Estrutura inicial usada na primeira vez que o app abre.
+function createInitialData(){
   const w=(id,name,emoji,color,balance,type)=>({id,name,emoji,color,balance,type});
   const now=new Date(); const y=now.getFullYear(), m=now.getMonth();
   const d=n=>new Date(y,m,n).toISOString().slice(0,10);
   return {
-    user:{name:'Sandro'},
+    user:{name:''},        // fica em branco: quem usa preenche nos ajustes
     settings:{theme:'light',hideValues:false},
     wallets:[
       w('banco','Conta Bancária','🏦','#2563eb',0,'Conta'),
@@ -579,64 +607,101 @@ function defaultData(){
     goals:[]
   };
 }
-function t(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7);}
+// Gera um identificador curto para transações, metas e carteiras.
+function newId(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7);}
 
-/* ---------- Estado ---------- */
-let S = store.load() || defaultData();
-function persist(){ store.save(S); }
 
-/* ---------- Helpers ---------- */
-const MASK='––––––';
-const R = n => (S.settings.hideValues ? MASK :
+let state = storage.load() || createInitialData();
+// Grava o estado atual no aparelho.
+function saveState(){ storage.save(state); }
+
+/* ---------------------------------------------------------------
+   3. FORMATAÇÃO E UTILITÁRIOS
+   --------------------------------------------------------------- */
+const HIDDEN_MASK='––––––';
+/* Observação:
+   São dois formatadores de propósito. money() e moneyShort() respeitam
+   o botão do olho e escondem o valor quando ele está ligado; já
+   formatMoney() sempre mostra. Os simuladores usam formatMoney porque
+   ali o número é hipotético, não é o dinheiro da pessoa — esconder
+   aquilo não protegeria nada e só atrapalharia. */
+const money = n => (state.settings.hideValues ? HIDDEN_MASK :
   'R$ '+Number(n||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}));
-const R0 = n => (S.settings.hideValues ? MASK :
+const moneyShort = n => (state.settings.hideValues ? HIDDEN_MASK :
   'R$ '+Number(n||0).toLocaleString('pt-BR',{minimumFractionDigits:0,maximumFractionDigits:0}));
-const fmtBRL = n => 'R$ '+Number(n||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
-const fmtN = n => Number(n||0).toLocaleString('pt-BR',{maximumFractionDigits:1});
-const pctBR = n => Number(n||0).toFixed(1).replace('.',',');
-function catInfo(type,cat){ const C=(type==='receita'?CAT_RECEITA:CAT_DESPESA); if(C[cat]) return C[cat];
-  return {e:'📦',c:colorFromString(cat||'Outros')}; }
-function colorFromString(s){ let h=0; for(let i=0;i<s.length;i++) h=s.charCodeAt(i)+((h<<5)-h);
+const formatMoney = n => 'R$ '+Number(n||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+const formatNumber = n => Number(n||0).toLocaleString('pt-BR',{maximumFractionDigits:1});
+const formatPercent = n => Number(n||0).toFixed(1).replace('.',',');
+// Devolve o emoji e a cor de uma categoria.
+function categoryInfo(type,cat){ const C=(type==='receita'?INCOME_CATEGORIES:EXPENSE_CATEGORIES); if(C[cat]) return C[cat];
+  return {e:'📦',c:colorFromText(cat||'Outros')}; }
+// Cor estável a partir de um texto — a mesma palavra sempre gera a mesma cor.
+function colorFromText(s){ let h=0; for(let i=0;i<s.length;i++) h=s.charCodeAt(i)+((h<<5)-h);
   const p=['#ef4444','#f59e0b','#10b981','#3b82f6','#8b5cf6','#ec4899','#14b8a6','#f97316','#6366f1','#eab308'];
   return p[Math.abs(h)%p.length]; }
-const walletById = id => S.wallets.find(w=>w.id===id);
-const fmtDate = iso => { const [y,m,d]=iso.split('-'); return `${d}/${m}`; };
-const monthKey = iso => iso.slice(0,7);
-const MESES=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
-const curMonth = () => new Date().toISOString().slice(0,7);
-function greeting(){ const h=new Date().getHours(); return h<12?'Bom dia':h<18?'Boa tarde':'Boa noite'; }
+const findWallet = id => state.wallets.find(w=>w.id===id);
+const formatDayMonth = iso => { const [y,m,d]=iso.split('-'); return `${d}/${m}`; };
+const toMonthKey = iso => iso.slice(0,7);
+const MONTH_NAMES=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+const currentMonth = () => new Date().toISOString().slice(0,7);
+// Saudação conforme o horário do aparelho.
+function greetingText(){ const h=new Date().getHours(); return h<12?'Bom dia':h<18?'Boa tarde':'Boa noite'; }
 
-function monthStats(mk=curMonth()){
+// Soma entradas, despesas e saldo de um mês.
+function monthSummary(mk=currentMonth()){
   let inc=0,exp=0;
-  S.transactions.forEach(x=>{ if(monthKey(x.date)!==mk) return;
-    const isVale=NO_TOTAL_WALLETS.includes(x.wallet);
+  state.transactions.forEach(x=>{ if(toMonthKey(x.date)!==mk) return;
+    const isVale=BENEFIT_WALLETS.includes(x.wallet);
     if(x.type==='receita'){ if(!isVale) inc+=x.amount; }
     else if(x.type==='despesa'){ if(!isVale) exp+=x.amount; }
   });
   return {inc,exp,bal:inc-exp};
 }
 /* soma tudo (todos os meses) para o Histórico Geral */
-function allTimeStats(){
+// Mesma conta do resumo mensal, só que somando todos os meses.
+function overallSummary(){
   let inc=0,exp=0,foodIn=0,foodOut=0,trIn=0,trOut=0;
-  S.transactions.forEach(x=>{
+  state.transactions.forEach(x=>{
     const food=(x.wallet==='va'||x.wallet==='vr'), tr=(x.wallet==='vt');
     if(x.type==='receita'){ food?foodIn+=x.amount: tr?trIn+=x.amount: inc+=x.amount; }
     else if(x.type==='despesa'){ food?foodOut+=x.amount: tr?trOut+=x.amount: exp+=x.amount; }
   });
   return {inc,exp,bal:inc-exp,foodIn,foodOut,trIn,trOut};
 }
-function totalBalance(){ return S.wallets.reduce((s,w)=> NO_TOTAL_WALLETS.includes(w.id)?s:s+w.balance, 0); }
-function beneFood(){ const va=walletById('va'); return va?va.balance:0; }
-function beneTransport(){ const vt=walletById('vt'); return vt?vt.balance:0; }
+/* Saldo acumulado, sem contar os benefícios.
 
-/* ---------- Toast ---------- */
-let toastT;
-function toast(msg){ const el=document.getElementById('toast'); el.textContent=msg; el.classList.add('show');
-  clearTimeout(toastT); toastT=setTimeout(()=>el.classList.remove('show'),2200); }
+   Observação:
+   Vale-alimentação e vale-transporte não entram no saldo total de
+   propósito. Esse dinheiro não é livre: só serve para aquilo. Somar
+   tudo daria um saldo maior do que a pessoa realmente tem para gastar. */
+function totalBalance(){ return state.wallets.reduce((s,w)=> BENEFIT_WALLETS.includes(w.id)?s:s+w.balance, 0); }
+// Saldo atual do vale-alimentação.
+function foodBenefitBalance(){ const va=findWallet('va'); return va?va.balance:0; }
+// Saldo atual do vale-transporte.
+function transportBenefitBalance(){ const vt=findWallet('vt'); return vt?vt.balance:0; }
+
+/* Aviso rápido que aparece e some sozinho no rodapé. */
+let toastTimer;
+// Mostra um aviso rápido no rodapé.
+function showToast(msg){ const el=document.getElementById('toast'); el.textContent=msg; el.classList.add('show');
+  clearTimeout(toastTimer); toastTimer=setTimeout(()=>el.classList.remove('show'),2200); }
+
+/* ---------------------------------------------------------------
+   5. TELAS
+   Cada tela monta o próprio HTML como texto e joga no seu container.
+
+   Observação:
+   Optei por montar o HTML como texto em vez de criar elemento por
+   elemento. Com telas deste tamanho o ganho de desempenho de uma
+   abordagem mais elaborada seria irrelevante, e assim a estrutura de
+   cada tela fica visível de uma olhada só, o que facilita muito
+   mexer nela depois.
+   --------------------------------------------------------------- */
 
 /* ============================================================
-   RENDER: HEADER
+   Cabeçalho
    ============================================================ */
+// Monta o cabeçalho conforme a tela aberta.
 function renderHeader(scr){
   const h=document.getElementById('header');
   const titles={transacoes:'Transações',carteiras:'Carteiras',estatisticas:'Relatórios',
@@ -647,14 +712,14 @@ function renderHeader(scr){
       <div class="hdr-top">
         <button class="hdr-icn" id="hMenu">☰</button>
         <div class="brand"><span class="logo">💰</span></div>
-        <button class="hdr-icn" onclick="go('mais')">🔔</button>
+        <button class="hdr-icn" onclick="showScreen('mais')">🔔</button>
       </div>
       <div style="text-align:center;margin-top:2px">
         <h1 style="font-size:19px;margin:0;font-weight:800">Controle Financeiro</h1>
         <p style="font-size:11.5px;margin:2px 0 0;color:#94a3b8">Organize suas finanças e conquiste seus objetivos</p>
       </div>
     </div>`;
-    document.getElementById('hMenu').onclick=()=>go('mais');
+    document.getElementById('hMenu').onclick=()=>showScreen('mais');
   } else if(scr==='carteira-det'){
     h.innerHTML=`<div class="hdr-simple navy">
       <button class="hdr-back" onclick="goBack()">‹ Voltar</button>
@@ -662,15 +727,15 @@ function renderHeader(scr){
   } else if(scr==='lista'){
     h.innerHTML=`<div class="hdr-simple navy">
       <button class="hdr-back" onclick="goBack()">‹ Voltar</button>
-      <h1>${listaTitle||'Lista'}</h1><span style="width:64px"></span></div>`;
+      <h1>${listTitle||'Lista'}</h1><span style="width:64px"></span></div>`;
   } else if(scr==='mesdet'){
     h.innerHTML=`<div class="hdr-simple navy">
       <button class="hdr-back" onclick="goBack()">‹ Voltar</button>
-      <h1>${selMonth?monthLabel(selMonth):'Mês'}</h1><span style="width:64px"></span></div>`;
+      <h1>${selectedMonth?monthLabel(selectedMonth):'Mês'}</h1><span style="width:64px"></span></div>`;
   } else if(scr==='comparar'){
     h.innerHTML=`<div class="hdr-simple navy">
       <button class="hdr-back" onclick="goBack()">‹ Voltar</button>
-      <h1>${cmpMode==='ano'?'Comparação Anual':'Comparação Mensal'}</h1><span style="width:64px"></span></div>`;
+      <h1>${comparisonMode==='ano'?'Comparação Anual':'Comparação Mensal'}</h1><span style="width:64px"></span></div>`;
   } else {
     h.innerHTML=`<div class="hdr-simple navy">
       <button class="hdr-back" onclick="goBack()">‹ Voltar</button>
@@ -679,53 +744,54 @@ function renderHeader(scr){
 }
 
 /* ============================================================
-   RENDER: DASHBOARD (Início)
+   Tela: Início
    ============================================================ */
-function renderInicio(){
-  const ms=monthStats();
-  const mes=MESES[new Date().getMonth()];
+// Tela inicial: saldo, benefícios, resumo do mês, atalhos e carteiras.
+function renderHome(){
+  const ms=monthSummary();
+  const mes=MONTH_NAMES[new Date().getMonth()];
   const el=document.getElementById('scr-inicio');
   el.innerHTML=`
     <div class="hero">
       <div style="display:flex;justify-content:space-between;align-items:flex-start">
         <div>
-          <div class="lbl">${greeting()}, ${S.user.name} 👋</div>
+          <div class="lbl">${greetingText()}${state.user.name?', '+state.user.name:''} 👋</div>
           <div style="font-size:12px;color:#94a3b8;margin-top:2px">Saldo acumulado — sobras do salário + extras (sem vales)</div>
         </div>
-        <button class="eye" onclick="toggleHide()">${S.settings.hideValues?'🙈':'👁️'}</button>
+        <button class="eye" onclick="toggleHiddenValues()">${state.settings.hideValues?'🙈':'👁️'}</button>
       </div>
-      <div class="val num">${R(totalBalance())}</div>
-      <button class="hist-btn" onclick="go('historico')">📊 Histórico Geral</button>
-      <button class="hist-btn" style="margin-top:8px" onclick="go('meses')">📅 Histórico dos Meses</button>
+      <div class="val num">${money(totalBalance())}</div>
+      <button class="hist-btn" onclick="showScreen('historico')">📊 Histórico Geral</button>
+      <button class="hist-btn" style="margin-top:8px" onclick="showScreen('meses')">📅 Histórico dos Meses</button>
     </div>
 
     <div class="bene-strip">
       <div class="bene-card">
         <div class="be-ic" style="background:var(--red-soft)">🍽️</div>
-        <div><div class="be-k">Vale Alimentação · ${mes}</div><div class="be-v num" style="color:#f97316">${R(beneFood())}</div></div>
+        <div><div class="be-k">Vale Alimentação · ${mes}</div><div class="be-v num" style="color:#f97316">${money(foodBenefitBalance())}</div></div>
       </div>
       <div class="bene-card">
         <div class="be-ic" style="background:rgba(245,158,11,.16)">🚌</div>
-        <div><div class="be-k">Vale Transporte · ${mes}</div><div class="be-v num" style="color:#f59e0b">${R(beneTransport())}</div></div>
+        <div><div class="be-k">Vale Transporte · ${mes}</div><div class="be-v num" style="color:#f59e0b">${money(transportBenefitBalance())}</div></div>
       </div>
     </div>
 
     <div class="card">
       <div class="card-title"><h2>Resumo Mês ${mes}</h2></div>
-      <button class="rsum-row" onclick="openLista('entradas')">
+      <button class="rsum-row" onclick="openFilteredList('entradas')">
         <div class="rs-ic" style="background:var(--green-soft);color:var(--green)">📥</div>
         <div class="rs-main"><div class="rs-k">Entradas (salário + extras)</div><div class="rs-sub">toque para ver o que entrou</div></div>
-        <div class="rs-v num" style="color:var(--green)">${R(ms.inc)}</div><span class="rs-ch">›</span>
+        <div class="rs-v num" style="color:var(--green)">${money(ms.inc)}</div><span class="rs-ch">›</span>
       </button>
-      <button class="rsum-row" onclick="openLista('despesas')">
+      <button class="rsum-row" onclick="openFilteredList('despesas')">
         <div class="rs-ic" style="background:var(--red-soft);color:var(--red)">📤</div>
         <div class="rs-main"><div class="rs-k">Despesas do mês</div><div class="rs-sub">toque para ver a lista</div></div>
-        <div class="rs-v num" style="color:var(--red)">${R(ms.exp)}</div><span class="rs-ch">›</span>
+        <div class="rs-v num" style="color:var(--red)">${money(ms.exp)}</div><span class="rs-ch">›</span>
       </button>
       <div class="rsum-row static">
         <div class="rs-ic" style="background:var(--blue-soft);color:var(--blue)">💠</div>
         <div class="rs-main"><div class="rs-k">Saldo do mês de ${mes}</div><div class="rs-sub">o que sobrou do salário + extras</div></div>
-        <div class="rs-v num" style="color:var(--blue)">${R(ms.bal)}</div>
+        <div class="rs-v num" style="color:var(--blue)">${money(ms.bal)}</div>
       </div>
     </div>
 
@@ -733,8 +799,8 @@ function renderInicio(){
     <div class="qa">
       <button onclick="openForm('receita')"><div class="ic" style="background:var(--green-soft);color:var(--green)">＋</div><div class="tx">Nova Entrada</div></button>
       <button onclick="openForm('despesa')"><div class="ic" style="background:var(--red-soft);color:var(--red)">－</div><div class="tx">Nova Despesa</div></button>
-      <button onclick="go('carteiras')"><div class="ic" style="background:var(--blue-soft);color:var(--blue)">👛</div><div class="tx">Carteiras</div></button>
-      <button onclick="go('estatisticas')"><div class="ic" style="background:#ede9fe;color:#7c3aed">📊</div><div class="tx">Relatórios</div></button>
+      <button onclick="showScreen('carteiras')"><div class="ic" style="background:var(--blue-soft);color:var(--blue)">👛</div><div class="tx">Carteiras</div></button>
+      <button onclick="showScreen('estatisticas')"><div class="ic" style="background:#ede9fe;color:#7c3aed">📊</div><div class="tx">Relatórios</div></button>
     </div>
 
     <div class="sec-label">Minhas Carteiras</div>
@@ -751,53 +817,56 @@ function renderInicio(){
   `;
   renderWalletCards(document.getElementById('homeWallets'),'scroll');
   const hw=document.getElementById('homeWallets');
-  if(hw){ hw.onscroll=updateWnav; setTimeout(updateWnav,60); }
+  if(hw){ hw.onscroll=updateWalletArrows; setTimeout(updateWalletArrows,60); }
   renderDonut(document.getElementById('homeDonut'));
 }
-const pct=(a,b)=> b>0?Math.min(100,Math.round(a/b*100)):0;
 
-/* ---------- Wallet cards ---------- */
-function walletMonthFlow(id,mk=curMonth()){
+/* Cartões de carteira usados no Início e na tela de Carteiras. */
+// Quanto entrou e saiu de uma carteira no mês.
+function walletMonthFlow(id,mk=currentMonth()){
   let inc=0,exp=0,last=null;
-  S.transactions.filter(x=>x.wallet===id||x.toWallet===id)
+  state.transactions.filter(x=>x.wallet===id||x.toWallet===id)
     .sort((a,b)=>b.date.localeCompare(a.date))
     .forEach(x=>{
       if(!last) last=x;
-      if(monthKey(x.date)!==mk) return;
+      if(toMonthKey(x.date)!==mk) return;
       if(x.wallet===id && (x.type==='despesa'||x.type==='transferencia'||x.type==='investimento')) exp+=x.amount;
       if((x.wallet===id&&x.type==='receita')||(x.toWallet===id)) inc+=x.amount;
     });
   return {inc,exp,last};
 }
+// Move o carrossel de carteiras para os lados.
 function scrollWallets(dir){
   const sc=document.getElementById('homeWallets'); if(!sc) return;
   sc.scrollBy({left:dir*212,behavior:'smooth'});
-  setTimeout(updateWnav,350);
+  setTimeout(updateWalletArrows,350);
 }
-function updateWnav(){
+// Liga e desliga as setas do carrossel conforme a posição.
+function updateWalletArrows(){
   const sc=document.getElementById('homeWallets'), L=document.getElementById('wnavL'), Rr=document.getElementById('wnavR');
   if(!sc||!L||!Rr) return;
   L.disabled = sc.scrollLeft<=2;
   Rr.disabled = sc.scrollLeft >= sc.scrollWidth - sc.clientWidth - 2;
 }
+// Monta os cartões de carteira.
 function renderWalletCards(container,mode){
   container.className = mode==='scroll'?'wallets-scroll':'wgrid';
-  container.innerHTML = S.wallets.map(w=>{
+  container.innerHTML = state.wallets.map(w=>{
     const f=walletMonthFlow(w.id);
     const denom=f.inc+f.exp;
     const usedPct = denom>0?Math.round(f.exp/denom*100):0;
-    const lastTx = f.last?`${fmtDate(f.last.date)} · ${f.last.desc}`:'Sem movimentações';
+    const lastTx = f.last?`${formatDayMonth(f.last.date)} · ${f.last.desc}`:'Sem movimentações';
     return `<div class="wcard" onclick="openWallet('${w.id}')">
       <div class="band" style="background:${w.color}"></div>
       <div class="body">
         <div class="top">
-          <div class="emoji" style="background:${hex2rgba(w.color,.14)}">${w.emoji}</div>
+          <div class="emoji" style="background:${hexToRgba(w.color,.14)}">${w.emoji}</div>
           <div style="min-width:0"><div class="nm">${w.name}</div><div class="ty">${w.type}</div></div>
         </div>
-        <div class="bal num" style="color:${w.color}">${R(w.balance)}</div>
+        <div class="bal num" style="color:${w.color}">${money(w.balance)}</div>
         <div class="flow">
-          <span class="up">↑ <b class="num">${R(f.inc)}</b></span>
-          <span class="dn">↓ <b class="num">${R(f.exp)}</b></span>
+          <span class="up">↑ <b class="num">${money(f.inc)}</b></span>
+          <span class="dn">↓ <b class="num">${money(f.exp)}</b></span>
         </div>
         <div class="barwrap"><div class="barfill" style="width:${usedPct}%;background:${w.color}"></div></div>
         <div class="last">🕘 ${lastTx}</div>
@@ -806,20 +875,35 @@ function renderWalletCards(container,mode){
   }).join('');
 }
 
-/* ---------- Donut chart (SVG puro) ---------- */
-function expenseByCat(mk=curMonth()){
+/* Gráfico de rosca das despesas por categoria. */
+/* Agrupa as despesas do mês por categoria.
+
+   Observação:
+   Gastos pagos com vale ficam de fora. O gráfico responde à pergunta
+   "quanto do meu salário eu já gastei", e o vale não sai do salário.
+   Se entrasse, a porcentagem passaria de 100% sem a pessoa ter
+   estourado nada. */
+function expensesByCategory(mk=currentMonth()){
   const map={};
-  S.transactions.forEach(x=>{ if(x.type!=='despesa'||monthKey(x.date)!==mk) return;
-    if(NO_TOTAL_WALLETS.includes(x.wallet)) return;  // pago com vale: não entra no gráfico
+  state.transactions.forEach(x=>{ if(x.type!=='despesa'||toMonthKey(x.date)!==mk) return;
+    if(BENEFIT_WALLETS.includes(x.wallet)) return;  // pago com vale: não entra no gráfico
     map[x.cat]=(map[x.cat]||0)+x.amount; });
-  return Object.entries(map).map(([cat,val])=>({cat,val,c:catInfo('despesa',cat).c}))
+  return Object.entries(map).map(([cat,val])=>({cat,val,c:categoryInfo('despesa',cat).c}))
     .sort((a,b)=>b.val-a.val);
 }
+/* Desenha o gráfico de rosca das despesas.
+
+   Observação:
+   A porcentagem é calculada sobre o que entrou no mês, não sobre o
+   total gasto. Por isso existe a fatia "Sobrou": sem ela as fatias
+   nunca fechariam 100% e o gráfico ficaria com um buraco sem
+   explicação. Quando não há entradas no mês, a base volta a ser o
+   total de despesas — senão daria divisão por zero. */
 function renderDonut(container){
-  const data=expenseByCat();
+  const data=expensesByCategory();
   const totalExp=data.reduce((s,d)=>s+d.val,0);
   if(totalExp===0){ container.innerHTML=`<div class="empty" style="padding:24px"><div class="e">📊</div><p>Nenhuma despesa paga com salário/extras neste mês.<br><span style="font-size:11.5px">Gastos pagos com vale não entram aqui.</span></p></div>`; return; }
-  const income=monthStats().inc;              // entradas do mês (salário + extras)
+  const income=monthSummary().inc;              // entradas do mês (salário + extras)
   const useInc=income>0;
   const overspent=useInc && totalExp>income;
   const base=useInc?income:totalExp;          // base do %
@@ -847,243 +931,268 @@ function renderDonut(container){
       <span class="lg-nm">Sobrou</span><span class="lg-pc num">${Math.round(leftover/base*100)}%</span></div>`;
   }
   const note = useInc
-    ? `<div class="donut-note">% sobre as entradas do mês (${R(income)}) · só gastos pagos com salário/extras${overspent?' · ⚠️ gastou mais que entrou':''}</div>`
+    ? `<div class="donut-note">% sobre as entradas do mês (${money(income)}) · só gastos pagos com salário/extras${overspent?' · ⚠️ gastou mais que entrou':''}</div>`
     : `<div class="donut-note">Sem entradas no mês — % sobre o total de gastos do salário/extras</div>`;
   container.innerHTML=`<div class="donut-wrap">
     <svg class="donut" width="128" height="128" viewBox="0 0 128 128">
       ${segs}
-      <text class="donut-total num" x="64" y="60" text-anchor="middle">${R0(totalExp)}</text>
+      <text class="donut-total num" x="64" y="60" text-anchor="middle">${moneyShort(totalExp)}</text>
       <text class="donut-center" x="64" y="76" text-anchor="middle">gasto</text>
     </svg>
     <div class="legend">${legend}</div></div>${note}`;
 }
 
 /* ============================================================
-   RENDER: TRANSAÇÕES
+   Tela: Transações
    ============================================================ */
-let txFilter='todas';
-function renderTransacoes(){
+let transactionFilter='todas';
+// Tela de transações, com os filtros de entradas e despesas.
+function renderTransactions(){
   const el=document.getElementById('scr-transacoes');
-  let list=[...S.transactions].sort((a,b)=>b.date.localeCompare(a.date));
-  if(txFilter==='entradas') list=list.filter(x=>x.type==='receita');
-  if(txFilter==='despesas') list=list.filter(x=>x.type==='despesa');
+  let list=[...state.transactions].sort((a,b)=>b.date.localeCompare(a.date));
+  if(transactionFilter==='entradas') list=list.filter(x=>x.type==='receita');
+  if(transactionFilter==='despesas') list=list.filter(x=>x.type==='despesa');
 
-  const ms=monthStats();
+  const ms=monthSummary();
   let rows='';
   if(list.length===0){
     rows=`<div class="empty"><div class="e">🧾</div><p>Nenhuma transação por aqui.<br>Toque no + para adicionar.</p></div>`;
   } else {
     let curM='';
     list.forEach(x=>{
-      const mk=monthKey(x.date);
+      const mk=toMonthKey(x.date);
       if(mk!==curM){ curM=mk; const [y,mo]=mk.split('-');
-        rows+=`<div class="tx-month">${MESES[+mo-1]} ${y}</div>`; }
-      rows+=txRow(x);
+        rows+=`<div class="tx-month">${MONTH_NAMES[+mo-1]} ${y}</div>`; }
+      rows+=transactionRow(x);
     });
   }
   el.innerHTML=`
     <div class="tx-tabs">
-      <button class="${txFilter==='todas'?'on':''}" onclick="setTxFilter('todas')">Todas</button>
-      <button class="${txFilter==='entradas'?'on':''}" onclick="setTxFilter('entradas')">Entradas</button>
-      <button class="${txFilter==='despesas'?'on':''}" onclick="setTxFilter('despesas')">Despesas</button>
+      <button class="${transactionFilter==='todas'?'on':''}" onclick="setTransactionFilter('todas')">Todas</button>
+      <button class="${transactionFilter==='entradas'?'on':''}" onclick="setTransactionFilter('entradas')">Entradas</button>
+      <button class="${transactionFilter==='despesas'?'on':''}" onclick="setTransactionFilter('despesas')">Despesas</button>
     </div>
     ${rows}
     <div class="card" style="margin-top:14px">
       <div class="msum">
-        <div class="col"><div class="k in">Entradas</div><div class="v num" style="color:var(--green)">${R(ms.inc)}</div></div>
-        <div class="col"><div class="k out">Despesas</div><div class="v num" style="color:var(--red)">${R(ms.exp)}</div></div>
-        <div class="col"><div class="k bal">Saldo</div><div class="v num" style="color:var(--blue)">${R(ms.bal)}</div></div>
+        <div class="col"><div class="k in">Entradas</div><div class="v num" style="color:var(--green)">${money(ms.inc)}</div></div>
+        <div class="col"><div class="k out">Despesas</div><div class="v num" style="color:var(--red)">${money(ms.exp)}</div></div>
+        <div class="col"><div class="k bal">Saldo</div><div class="v num" style="color:var(--blue)">${money(ms.bal)}</div></div>
       </div>
     </div>`;
 }
-function txRow(x){
+// Uma linha da lista de transações.
+function transactionRow(x){
   const isIn = x.type==='receita';
   const isTr = x.type==='transferencia';
   const isInv= x.type==='investimento';
-  const info = isTr?{e:'🔄',c:'#2563eb'} : isInv?{e:'📈',c:'#7c3aed'} : catInfo(x.type,x.cat);
-  const w=walletById(x.wallet);
+  const info = isTr?{e:'🔄',c:'#2563eb'} : isInv?{e:'📈',c:'#7c3aed'} : categoryInfo(x.type,x.cat);
+  const w=findWallet(x.wallet);
   let sub;
-  if(isTr){ const tw=walletById(x.toWallet); sub=`${fmtDate(x.date)} · ${w?w.name:''} → ${tw?tw.name:''}`; }
-  else sub=`${fmtDate(x.date)} · ${x.cat||''} · ${w?w.name:''}`;
+  if(isTr){ const tw=findWallet(x.toWallet); sub=`${formatDayMonth(x.date)} · ${w?w.name:''} → ${tw?tw.name:''}`; }
+  else sub=`${formatDayMonth(x.date)} · ${x.cat||''} · ${w?w.name:''}`;
   const sign = isIn?'+':'-';
   const cls = isIn?'in':'out';
   return `<div class="tx-row">
-    <div class="tx-ic" style="background:${hex2rgba(info.c,.14)}">${info.e}</div>
+    <div class="tx-ic" style="background:${hexToRgba(info.c,.14)}">${info.e}</div>
     <div class="tx-mid"><div class="d">${x.desc}</div><div class="m">${sub}</div></div>
-    <div class="tx-amt ${cls} num">${sign}${R(x.amount).replace('R$ ','R$ ')}
+    <div class="tx-amt ${cls} num">${sign}${money(x.amount).replace('R$ ','R$ ')}
       <small>${w?w.emoji+' '+w.name:''}</small></div>
-    <button class="del-x" onclick="delTx('${x.id}',event)">🗑</button>
+    <button class="del-x" onclick="deleteTransaction('${x.id}',event)">🗑</button>
   </div>`;
 }
-function setTxFilter(f){ txFilter=f; renderTransacoes(); }
-function delTx(id,ev){ ev.stopPropagation();
+// Troca o filtro da lista de transações.
+function setTransactionFilter(f){ transactionFilter=f; renderTransactions(); }
+// Apaga uma transação e devolve o valor para a carteira.
+function deleteTransaction(id,ev){ ev.stopPropagation();
   if(!confirm('Excluir esta transação? O saldo da carteira será revertido.')) return;
-  const x=S.transactions.find(t=>t.id===id); if(!x) return;
-  revertTx(x);
-  S.transactions=S.transactions.filter(t=>t.id!==id);
-  persist(); renderAll(); toast('Transação excluída');
+  const x=state.transactions.find(t=>t.id===id); if(!x) return;
+  undoWalletEffect(x);
+  state.transactions=state.transactions.filter(t=>t.id!==id);
+  saveState(); renderAll(); showToast('Transação excluída');
 }
-function revertTx(x){
-  const w=walletById(x.wallet);
+/* Desfaz o efeito de uma transação no saldo das carteiras.
+
+   Observação:
+   Ainda trato aqui os tipos "transferencia" e "investimento" mesmo
+   não sendo mais possível criá-los pelo app. Quem usa desde as
+   primeiras versões pode ter lançamentos assim salvos, e sem esse
+   tratamento o saldo ficaria errado ao apagá-los. */
+function undoWalletEffect(x){
+  const w=findWallet(x.wallet);
   if(x.type==='receita' && w) w.balance-=x.amount;
   if((x.type==='despesa'||x.type==='investimento') && w) w.balance+=x.amount;
-  if(x.type==='transferencia'){ const tw=walletById(x.toWallet);
+  if(x.type==='transferencia'){ const tw=findWallet(x.toWallet);
     if(w) w.balance+=x.amount; if(tw) tw.balance-=x.amount; }
-  if(x.type==='investimento'){ const iw=walletById('inv'); if(iw) iw.balance-=x.amount; }
+  if(x.type==='investimento'){ const iw=findWallet('inv'); if(iw) iw.balance-=x.amount; }
 }
 /* linha de transação só-leitura (para a lista de Entradas) */
-function txRowVw(x){
-  const isIn=x.type==='receita'; const info=catInfo(x.type,x.cat); const w=walletById(x.wallet);
-  const sub=`${fmtDate(x.date)} · ${x.cat||''}${w?' · '+w.name:''}`;
+// Linha de transação sem o botão de excluir (listas só de leitura).
+function transactionRowCompact(x){
+  const isIn=x.type==='receita'; const info=categoryInfo(x.type,x.cat); const w=findWallet(x.wallet);
+  const sub=`${formatDayMonth(x.date)} · ${x.cat||''}${w?' · '+w.name:''}`;
   return `<div class="tx-row">
-    <div class="tx-ic" style="background:${hex2rgba(info.c,.14)}">${info.e}</div>
+    <div class="tx-ic" style="background:${hexToRgba(info.c,.14)}">${info.e}</div>
     <div class="tx-mid"><div class="d">${x.desc}</div><div class="m">${sub}</div></div>
-    <div class="tx-amt ${isIn?'in':'out'} num">${isIn?'+':'-'}${R(x.amount)}</div></div>`;
+    <div class="tx-amt ${isIn?'in':'out'} num">${isIn?'+':'-'}${money(x.amount)}</div></div>`;
 }
 
 /* ============================================================
-   RENDER: LISTA do mês (Entradas / Despesas) — via Resumo
+   Tela: lista do mês (aberta pelo resumo do Início)
    ============================================================ */
-let listaKind='entradas', listaTitle='Entradas do mês';
-function openLista(kind){
-  listaKind=kind;
-  listaTitle = kind==='despesas' ? 'Despesas do mês' : 'Entradas do mês';
-  go('lista');
+let listKind='entradas', listTitle='Entradas do mês';
+// Abre a lista do mês filtrada por entradas ou despesas.
+function openFilteredList(kind){
+  listKind=kind;
+  listTitle = kind==='despesas' ? 'Despesas do mês' : 'Entradas do mês';
+  showScreen('lista');
 }
-function renderLista(){
+// Monta a lista do mês já filtrada.
+function renderFilteredList(){
   const el=document.getElementById('scr-lista');
-  const mk=curMonth(), mes=MESES[new Date().getMonth()];
-  const isDesp=listaKind==='despesas'; const type=isDesp?'despesa':'receita';
-  let list=S.transactions.filter(x=>x.type===type && monthKey(x.date)===mk);
-  if(!isDesp) list=list.filter(x=>!NO_TOTAL_WALLETS.includes(x.wallet)); // Entradas = salário+extras
+  const mk=currentMonth(), mes=MONTH_NAMES[new Date().getMonth()];
+  const isDesp=listKind==='despesas'; const type=isDesp?'despesa':'receita';
+  let list=state.transactions.filter(x=>x.type===type && toMonthKey(x.date)===mk);
+  if(!isDesp) list=list.filter(x=>!BENEFIT_WALLETS.includes(x.wallet)); // Entradas = salário+extras
   list.sort((a,b)=>b.date.localeCompare(a.date));
   const total=list.reduce((s,x)=>s+x.amount,0);
   let split;
   if(isDesp){
-    const conta=list.filter(x=>!NO_TOTAL_WALLETS.includes(x.wallet)).reduce((s,x)=>s+x.amount,0);
-    split=`<div class="lt-split"><span>Descontado do saldo: <b class="num">${R(conta)}</b></span><span>Pago com vales: <b class="num">${R(total-conta)}</b></span></div>`;
+    const conta=list.filter(x=>!BENEFIT_WALLETS.includes(x.wallet)).reduce((s,x)=>s+x.amount,0);
+    split=`<div class="lt-split"><span>Descontado do saldo: <b class="num">${money(conta)}</b></span><span>Pago com vales: <b class="num">${money(total-conta)}</b></span></div>`;
   } else {
     split=`<div class="lt-split"><span>Somente salário + extras deste mês</span></div>`;
   }
   const rows = list.length
-    ? list.map(x=>isDesp?txRow(x):txRowVw(x)).join('')
+    ? list.map(x=>isDesp?transactionRow(x):transactionRowCompact(x)).join('')
     : `<div class="empty"><div class="e">🧾</div><p>Nada lançado em ${mes} ainda.</p></div>`;
   el.innerHTML=`
     <div class="card lt-card">
       <div class="lt-k">${isDesp?'Total de despesas':'Total de entradas'} · ${mes}</div>
-      <div class="lt-v num" style="color:${isDesp?'var(--red)':'var(--green)'}">${R(total)}</div>
+      <div class="lt-v num" style="color:${isDesp?'var(--red)':'var(--green)'}">${money(total)}</div>
       ${split}
     </div>
     ${rows}`;
 }
 
 /* ============================================================
-   RENDER: HISTÓRICO GERAL (tudo, todos os meses)
+   Tela: histórico geral
    ============================================================ */
-function renderHistorico(){
+// Histórico geral: totais de todos os meses e a lista completa.
+function renderHistory(){
   const el=document.getElementById('scr-historico');
-  const a=allTimeStats();
-  let list=[...S.transactions].sort((x,y)=>y.date.localeCompare(x.date));
+  const a=overallSummary();
+  let list=[...state.transactions].sort((x,y)=>y.date.localeCompare(x.date));
   let rows='';
   if(!list.length){ rows=`<div class="empty"><div class="e">📊</div><p>Nada lançado ainda.<br>Comece adicionando suas entradas e despesas.</p></div>`; }
-  else { let cm=''; list.forEach(x=>{ const mk=monthKey(x.date);
-    if(mk!==cm){ cm=mk; const [y,mo]=mk.split('-'); rows+=`<div class="tx-month">${MESES[+mo-1]} ${y}</div>`; }
-    rows+=txRow(x); }); }
+  else { let cm=''; list.forEach(x=>{ const mk=toMonthKey(x.date);
+    if(mk!==cm){ cm=mk; const [y,mo]=mk.split('-'); rows+=`<div class="tx-month">${MONTH_NAMES[+mo-1]} ${y}</div>`; }
+    rows+=transactionRow(x); }); }
   el.innerHTML=`
     <div class="hero" style="margin-top:0">
       <div class="lbl">Saldo acumulado (salário + extras)</div>
-      <div class="val num">${R(a.bal)}</div>
+      <div class="val num">${money(a.bal)}</div>
       <div class="sub">Somando tudo, de todos os meses</div>
     </div>
     <div class="hist-grid">
-      <div class="hcard"><div class="hc-k">Entradas totais</div><div class="hc-v num" style="color:var(--green)">${R(a.inc)}</div></div>
-      <div class="hcard"><div class="hc-k">Despesas totais</div><div class="hc-v num" style="color:var(--red)">${R(a.exp)}</div></div>
+      <div class="hcard"><div class="hc-k">Entradas totais</div><div class="hc-v num" style="color:var(--green)">${money(a.inc)}</div></div>
+      <div class="hcard"><div class="hc-k">Despesas totais</div><div class="hc-v num" style="color:var(--red)">${money(a.exp)}</div></div>
     </div>
     <div class="hist-grid">
-      <div class="hcard"><div class="hc-k">🍽️ Vale Alimentação</div><div class="hc-v num" style="color:#f97316">${R(beneFood())}</div><div class="hc-s">Recebido ${R(a.foodIn)} · Gasto ${R(a.foodOut)}</div></div>
-      <div class="hcard"><div class="hc-k">🚌 Vale Transporte</div><div class="hc-v num" style="color:#f59e0b">${R(beneTransport())}</div><div class="hc-s">Recebido ${R(a.trIn)} · Gasto ${R(a.trOut)}</div></div>
+      <div class="hcard"><div class="hc-k">🍽️ Vale Alimentação</div><div class="hc-v num" style="color:#f97316">${money(foodBenefitBalance())}</div><div class="hc-s">Recebido ${money(a.foodIn)} · Gasto ${money(a.foodOut)}</div></div>
+      <div class="hcard"><div class="hc-k">🚌 Vale Transporte</div><div class="hc-v num" style="color:#f59e0b">${money(transportBenefitBalance())}</div><div class="hc-s">Recebido ${money(a.trIn)} · Gasto ${money(a.trOut)}</div></div>
     </div>
     <div class="sec-label">Tudo que foi lançado</div>
     ${rows}`;
 }
 
 /* ============================================================
-   RENDER: HISTÓRICO DOS MESES (escolher mês, detalhe, comparações)
+   Telas: histórico por mês, detalhe do mês e comparações
    ============================================================ */
-function monthsWithData(){ return [...new Set(S.transactions.map(x=>monthKey(x.date)))].sort().reverse(); }
-function monthLabel(mk){ const [y,mo]=mk.split('-'); return `${MESES[+mo-1]} ${y}`; }
-function shortMonth(mk){ const [y,mo]=mk.split('-'); return MESES[+mo-1].slice(0,3)+'/'+y.slice(2); }
-function statsForMonth(mk){
+// Lista dos meses que já têm algum lançamento.
+function monthsWithData(){ return [...new Set(state.transactions.map(x=>toMonthKey(x.date)))].sort().reverse(); }
+// Converte 2026-07 em "Julho 2026".
+function monthLabel(mk){ const [y,mo]=mk.split('-'); return `${MONTH_NAMES[+mo-1]} ${y}`; }
+// Converte 2026-07 em "Jul/26", para caber nos gráficos.
+function shortMonth(mk){ const [y,mo]=mk.split('-'); return MONTH_NAMES[+mo-1].slice(0,3)+'/'+y.slice(2); }
+// Entradas, despesas e saldo de um mês específico.
+function summaryForMonth(mk){
   let inc=0,exp=0,foodIn=0,foodOut=0,trIn=0,trOut=0;
-  S.transactions.forEach(x=>{ if(monthKey(x.date)!==mk) return;
+  state.transactions.forEach(x=>{ if(toMonthKey(x.date)!==mk) return;
     const food=(x.wallet==='va'), tr=(x.wallet==='vt');
     if(x.type==='receita'){ food?foodIn+=x.amount: tr?trIn+=x.amount: inc+=x.amount; }
     else if(x.type==='despesa'){ food?foodOut+=x.amount: tr?trOut+=x.amount: exp+=x.amount; }
   });
   return {inc,exp,bal:inc-exp,foodIn,foodOut,trIn,trOut};
 }
-let selMonth=null, cmpMode='mes';
-function openMes(mk){ selMonth=mk; go('mesdet'); }
-function openComparar(mode){ cmpMode=mode; go('comparar'); }
+let selectedMonth=null, comparisonMode='mes';
+// Abre o detalhe de um mês.
+function openMonth(mk){ selectedMonth=mk; showScreen('mesdet'); }
+// Abre a comparação, por mês ou por ano.
+function openComparison(mode){ comparisonMode=mode; showScreen('comparar'); }
 
-function renderMeses(){
+// Lista os meses com lançamentos.
+function renderMonthList(){
   const el=document.getElementById('scr-meses');
   const months=monthsWithData();
   const rows = months.length
-    ? months.map(mk=>{ const s=statsForMonth(mk);
-        return `<button class="rsum-row" onclick="openMes('${mk}')">
+    ? months.map(mk=>{ const s=summaryForMonth(mk);
+        return `<button class="rsum-row" onclick="openMonth('${mk}')">
           <div class="rs-ic" style="background:var(--blue-soft);color:var(--blue)">📅</div>
-          <div class="rs-main"><div class="rs-k">${monthLabel(mk)}</div><div class="rs-sub">Entradas ${R(s.inc)} · Despesas ${R(s.exp)}</div></div>
-          <div class="rs-v num" style="color:${s.bal>=0?'var(--green)':'var(--red)'}">${R(s.bal)}</div><span class="rs-ch">›</span>
+          <div class="rs-main"><div class="rs-k">${monthLabel(mk)}</div><div class="rs-sub">Entradas ${money(s.inc)} · Despesas ${money(s.exp)}</div></div>
+          <div class="rs-v num" style="color:${s.bal>=0?'var(--green)':'var(--red)'}">${money(s.bal)}</div><span class="rs-ch">›</span>
         </button>`; }).join('')
     : `<div class="empty"><div class="e">📅</div><p>Nenhum mês com lançamentos ainda.<br>Adicione entradas e despesas primeiro.</p></div>`;
   el.innerHTML=`
     <div class="cmp-grid">
-      <button class="cmp-btn" onclick="openComparar('mes')">📊 Comparação mensal</button>
-      <button class="cmp-btn" onclick="openComparar('ano')">📆 Comparação anual</button>
+      <button class="cmp-btn" onclick="openComparison('mes')">📊 Comparação mensal</button>
+      <button class="cmp-btn" onclick="openComparison('ano')">📆 Comparação anual</button>
     </div>
     <div class="sec-label">Escolha um mês para ver tudo</div>
     ${rows}`;
 }
 
-function renderMesdet(){
+// Detalhe completo de um mês.
+function renderMonthDetail(){
   const el=document.getElementById('scr-mesdet');
-  const mk=selMonth||curMonth();
-  const s=statsForMonth(mk);
-  const list=S.transactions.filter(x=>monthKey(x.date)===mk).sort((a,b)=>b.date.localeCompare(a.date));
-  const rows = list.length ? list.map(x=>txRow(x)).join('')
+  const mk=selectedMonth||currentMonth();
+  const s=summaryForMonth(mk);
+  const list=state.transactions.filter(x=>toMonthKey(x.date)===mk).sort((a,b)=>b.date.localeCompare(a.date));
+  const rows = list.length ? list.map(x=>transactionRow(x)).join('')
     : `<div class="empty"><div class="e">🧾</div><p>Nada lançado neste mês.</p></div>`;
   el.innerHTML=`
     <div class="hero" style="margin-top:0">
       <div class="lbl">Saldo do mês — ${monthLabel(mk)}</div>
-      <div class="val num">${R(s.bal)}</div>
+      <div class="val num">${money(s.bal)}</div>
       <div class="sub">Sobras do salário + extras (sem vales)</div>
     </div>
     <div class="hist-grid">
-      <div class="hcard"><div class="hc-k">Entradas (salário + extras)</div><div class="hc-v num" style="color:var(--green)">${R(s.inc)}</div></div>
-      <div class="hcard"><div class="hc-k">Despesas do mês</div><div class="hc-v num" style="color:var(--red)">${R(s.exp)}</div></div>
+      <div class="hcard"><div class="hc-k">Entradas (salário + extras)</div><div class="hc-v num" style="color:var(--green)">${money(s.inc)}</div></div>
+      <div class="hcard"><div class="hc-k">Despesas do mês</div><div class="hc-v num" style="color:var(--red)">${money(s.exp)}</div></div>
     </div>
     <div class="hist-grid">
-      <div class="hcard"><div class="hc-k">🍽️ Vale Alimentação</div><div class="hc-v num" style="color:#f97316">${R(s.foodIn-s.foodOut)}</div><div class="hc-s">Recebido ${R(s.foodIn)} · Gasto ${R(s.foodOut)}</div></div>
-      <div class="hcard"><div class="hc-k">🚌 Vale Transporte</div><div class="hc-v num" style="color:#f59e0b">${R(s.trIn-s.trOut)}</div><div class="hc-s">Recebido ${R(s.trIn)} · Gasto ${R(s.trOut)}</div></div>
+      <div class="hcard"><div class="hc-k">🍽️ Vale Alimentação</div><div class="hc-v num" style="color:#f97316">${money(s.foodIn-s.foodOut)}</div><div class="hc-s">Recebido ${money(s.foodIn)} · Gasto ${money(s.foodOut)}</div></div>
+      <div class="hcard"><div class="hc-k">🚌 Vale Transporte</div><div class="hc-v num" style="color:#f59e0b">${money(s.trIn-s.trOut)}</div><div class="hc-s">Recebido ${money(s.trIn)} · Gasto ${money(s.trOut)}</div></div>
     </div>
     <div class="sec-label">Tudo que foi lançado em ${monthLabel(mk)}</div>
     ${rows}`;
 }
 
+// Monta os períodos usados na comparação.
 function comparePeriods(mode){
   if(mode==='ano'){
-    const years=[...new Set(S.transactions.map(x=>x.date.slice(0,4)))].sort();
+    const years=[...new Set(state.transactions.map(x=>x.date.slice(0,4)))].sort();
     return years.map(y=>{ let inc=0,exp=0;
-      S.transactions.forEach(x=>{ if(x.date.slice(0,4)!==y) return;
+      state.transactions.forEach(x=>{ if(x.date.slice(0,4)!==y) return;
         if(x.wallet==='va'||x.wallet==='vt') return;
         if(x.type==='receita') inc+=x.amount; else if(x.type==='despesa') exp+=x.amount; });
       return {label:y,inc,exp,bal:inc-exp}; });
   }
-  return monthsWithData().slice(0,6).reverse().map(mk=>{ const s=statsForMonth(mk);
+  return monthsWithData().slice(0,6).reverse().map(mk=>{ const s=summaryForMonth(mk);
     return {label:shortMonth(mk),inc:s.inc,exp:s.exp,bal:s.bal}; });
 }
-function cmpBars(periods){
+// Gráfico de barras da comparação.
+function comparisonBars(periods){
   const max=Math.max(1,...periods.map(p=>Math.max(p.inc,p.exp)));
   const n=periods.length, groupW=Math.max(66,Math.min(110,320/n)), W=n*groupW, H=200, base=H-26, top=14;
   let bars='';
@@ -1097,109 +1206,115 @@ function cmpBars(periods){
   return `<div style="overflow-x:auto;padding-bottom:4px"><svg viewBox="0 0 ${W} ${H}" style="min-width:${W}px;height:${H}px;max-width:100%">${bars}</svg></div>
     <div class="cmp-legend"><span><i style="background:#16a34a"></i>Entradas</span><span><i style="background:#ef4444"></i>Despesas</span></div>`;
 }
-function renderComparar(){
+// Tela de comparação entre períodos.
+function renderComparison(){
   const el=document.getElementById('scr-comparar');
-  const isAno=cmpMode==='ano';
-  const periods=comparePeriods(cmpMode);
+  const isAno=comparisonMode==='ano';
+  const periods=comparePeriods(comparisonMode);
   const enough = periods.length>=1 && periods.some(p=>p.inc>0||p.exp>0);
   const totalInc=periods.reduce((s,p)=>s+p.inc,0), totalExp=periods.reduce((s,p)=>s+p.exp,0);
   const avg = periods.length? (totalInc-totalExp)/periods.length : 0;
   let best=null,worst=null; periods.forEach(p=>{ if(best===null||p.bal>best.bal) best=p; if(worst===null||p.bal<worst.bal) worst=p; });
   const body = enough ? `
-    ${cmpBars(periods)}
+    ${comparisonBars(periods)}
     <div class="card" style="margin-top:12px">
       <table class="proj-table">
         <thead><tr><th>${isAno?'Ano':'Mês'}</th><th>Entradas</th><th>Despesas</th><th>Saldo</th></tr></thead>
         <tbody>${periods.map(p=>`<tr><td>${p.label}</td>
-          <td class="num" style="color:var(--green)">${R(p.inc)}</td>
-          <td class="num" style="color:var(--red)">${R(p.exp)}</td>
-          <td class="num"><b style="color:${p.bal>=0?'var(--green)':'var(--red)'}">${R(p.bal)}</b></td></tr>`).join('')}</tbody>
+          <td class="num" style="color:var(--green)">${money(p.inc)}</td>
+          <td class="num" style="color:var(--red)">${money(p.exp)}</td>
+          <td class="num"><b style="color:${p.bal>=0?'var(--green)':'var(--red)'}">${money(p.bal)}</b></td></tr>`).join('')}</tbody>
       </table>
     </div>
     <div class="hist-grid" style="margin-top:12px">
-      <div class="hcard"><div class="hc-k">🏆 Melhor ${isAno?'ano':'mês'}</div><div class="hc-v" style="font-size:15px">${best?best.label:'—'}</div><div class="hc-s">Saldo ${best?R(best.bal):'—'}</div></div>
-      <div class="hcard"><div class="hc-k">📉 Menor saldo</div><div class="hc-v" style="font-size:15px">${worst?worst.label:'—'}</div><div class="hc-s">Saldo ${worst?R(worst.bal):'—'}</div></div>
+      <div class="hcard"><div class="hc-k">🏆 Melhor ${isAno?'ano':'mês'}</div><div class="hc-v" style="font-size:15px">${best?best.label:'—'}</div><div class="hc-s">Saldo ${best?money(best.bal):'—'}</div></div>
+      <div class="hcard"><div class="hc-k">📉 Menor saldo</div><div class="hc-v" style="font-size:15px">${worst?worst.label:'—'}</div><div class="hc-s">Saldo ${worst?money(worst.bal):'—'}</div></div>
     </div>
-    <div class="hcard" style="margin-top:12px"><div class="hc-k">Média de saldo por ${isAno?'ano':'mês'}</div><div class="hc-v num" style="color:var(--blue)">${R(avg)}</div></div>
+    <div class="hcard" style="margin-top:12px"><div class="hc-k">Média de saldo por ${isAno?'ano':'mês'}</div><div class="hc-v num" style="color:var(--blue)">${money(avg)}</div></div>
   ` : `<div class="empty"><div class="e">📊</div><p>Ainda não há dados suficientes para comparar.<br>Lance entradas e despesas em ${isAno?'mais de um ano':'alguns meses'}.</p></div>`;
   el.innerHTML=`
     <div class="cmp-toggle">
-      <button class="${!isAno?'on':''}" onclick="openComparar('mes')">Mensal</button>
-      <button class="${isAno?'on':''}" onclick="openComparar('ano')">Anual</button>
+      <button class="${!isAno?'on':''}" onclick="openComparison('mes')">Mensal</button>
+      <button class="${isAno?'on':''}" onclick="openComparison('ano')">Anual</button>
     </div>
     ${body}`;
 }
 
 /* ============================================================
-   RENDER: CARTEIRAS
+   Telas: carteiras e detalhe da carteira
    ============================================================ */
-function renderCarteiras(){
+// Tela com todas as carteiras.
+function renderWallets(){
   const el=document.getElementById('scr-carteiras');
   el.innerHTML=`
     <div class="hero" style="margin-top:0">
       <div class="lbl">Patrimônio total</div>
-      <div class="val num">${R(totalBalance())}</div>
-      <div class="sub">${S.wallets.length} carteiras ativas</div>
+      <div class="val num">${money(totalBalance())}</div>
+      <div class="sub">${state.wallets.length} carteiras ativas</div>
     </div>
     <div class="wgrid" id="allWallets"></div>
     <button class="goal g-add" style="margin:2px 0 20px" onclick="addWallet()">＋ Nova carteira personalizada</button>`;
   renderWalletCards(document.getElementById('allWallets'),'grid');
 }
-function openWallet(id){ detWalletId=id; go('carteira-det'); }
-let detWalletId=null;
-function renderCarteiraDet(){
-  const w=walletById(detWalletId); if(!w) return;
+// Abre o detalhe de uma carteira.
+function openWallet(id){ selectedWalletId=id; showScreen('carteira-det'); }
+let selectedWalletId=null;
+// Detalhe de uma carteira, com o extrato dela.
+function renderWalletDetail(){
+  const w=findWallet(selectedWalletId); if(!w) return;
   document.getElementById('detTitle').textContent=w.name;
   const f=walletMonthFlow(w.id);
-  const txs=S.transactions.filter(x=>x.wallet===w.id||x.toWallet===w.id)
+  const txs=state.transactions.filter(x=>x.wallet===w.id||x.toWallet===w.id)
     .sort((a,b)=>b.date.localeCompare(a.date));
   const el=document.getElementById('scr-carteira-det');
   let rows= txs.length? txs.map(x=>{
     const inFlow=(x.type==='receita'&&x.wallet===w.id)||x.toWallet===w.id;
-    const info = x.type==='transferencia'?{e:'🔄',c:'#2563eb'}:x.type==='investimento'?{e:'📈',c:'#7c3aed'}:catInfo(x.type,x.cat);
+    const info = x.type==='transferencia'?{e:'🔄',c:'#2563eb'}:x.type==='investimento'?{e:'📈',c:'#7c3aed'}:categoryInfo(x.type,x.cat);
     return `<div class="tx-row">
-      <div class="tx-ic" style="background:${hex2rgba(info.c,.14)}">${info.e}</div>
-      <div class="tx-mid"><div class="d">${x.desc}</div><div class="m">${fmtDate(x.date)} · ${x.cat||'Transferência'}</div></div>
-      <div class="tx-amt ${inFlow?'in':'out'} num">${inFlow?'+':'-'}${R(x.amount)}</div></div>`;
+      <div class="tx-ic" style="background:${hexToRgba(info.c,.14)}">${info.e}</div>
+      <div class="tx-mid"><div class="d">${x.desc}</div><div class="m">${formatDayMonth(x.date)} · ${x.cat||'Transferência'}</div></div>
+      <div class="tx-amt ${inFlow?'in':'out'} num">${inFlow?'+':'-'}${money(x.amount)}</div></div>`;
   }).join('') : `<div class="empty"><div class="e">${w.emoji}</div><p>Sem movimentações nesta carteira.</p></div>`;
   el.innerHTML=`
     <div class="hero" style="margin-top:0;background:linear-gradient(135deg,${w.color},${shade(w.color,-25)})">
       <div style="display:flex;align-items:center;gap:12px">
         <div style="font-size:34px">${w.emoji}</div>
         <div><div class="lbl" style="color:rgba(255,255,255,.85)">${w.name}</div>
-        <div class="val num" style="font-size:30px">${R(w.balance)}</div></div>
+        <div class="val num" style="font-size:30px">${money(w.balance)}</div></div>
       </div>
     </div>
     <div class="card"><div class="msum">
-      <div class="col"><div class="k in">Recebido no mês</div><div class="v num" style="color:var(--green)">${R(f.inc)}</div></div>
-      <div class="col"><div class="k out">Gasto no mês</div><div class="v num" style="color:var(--red)">${R(f.exp)}</div></div>
+      <div class="col"><div class="k in">Recebido no mês</div><div class="v num" style="color:var(--green)">${money(f.inc)}</div></div>
+      <div class="col"><div class="k out">Gasto no mês</div><div class="v num" style="color:var(--red)">${money(f.exp)}</div></div>
     </div></div>
     <div class="sec-label">Histórico</div>
     ${rows}`;
 }
 
 /* ============================================================
-   RENDER: ESTATÍSTICAS / RELATÓRIOS
+   Tela: relatórios
    ============================================================ */
+// Devolve os últimos N meses, mesmo os que não têm lançamento.
 function lastNMonths(n){
   const arr=[]; const now=new Date();
   for(let i=n-1;i>=0;i--){ const dt=new Date(now.getFullYear(),now.getMonth()-i,1);
-    arr.push({key:dt.toISOString().slice(0,7),label:MESES[dt.getMonth()].slice(0,3)}); }
+    arr.push({key:dt.toISOString().slice(0,7),label:MONTH_NAMES[dt.getMonth()].slice(0,3)}); }
   return arr;
 }
-function renderEstatisticas(){
+// Tela de relatórios: categorias, receitas x despesas e evolução do saldo.
+function renderReports(){
   const el=document.getElementById('scr-estatisticas');
   const months=lastNMonths(6);
-  const bars=months.map(m=>({...m,...monthStats(m.key)}));
+  const bars=months.map(m=>({...m,...monthSummary(m.key)}));
   const maxBar=Math.max(1,...bars.map(b=>Math.max(b.inc,b.exp)));
-  const ms=monthStats();
+  const ms=monthSummary();
 
   // saldo acumulado line
   let running=0; const linePts=bars.map(b=>{ running+=b.bal; return {label:b.label,val:running}; });
 
   el.innerHTML=`
     <div class="card">
-      <div class="card-title"><h2>Despesas por Categoria</h2><span class="pill">${MESES[new Date().getMonth()]}</span></div>
+      <div class="card-title"><h2>Despesas por Categoria</h2><span class="pill">${MONTH_NAMES[new Date().getMonth()]}</span></div>
       <div id="statDonut"></div>
     </div>
     <div class="card">
@@ -1207,8 +1322,8 @@ function renderEstatisticas(){
       <div class="bar-chart">
         ${bars.map(b=>`<div class="bar-col">
           <div class="bar-pair">
-            <div class="bar in" style="height:${Math.round(b.inc/maxBar*100)}%" title="${R(b.inc)}"></div>
-            <div class="bar out" style="height:${Math.round(b.exp/maxBar*100)}%" title="${R(b.exp)}"></div>
+            <div class="bar in" style="height:${Math.round(b.inc/maxBar*100)}%" title="${money(b.inc)}"></div>
+            <div class="bar out" style="height:${Math.round(b.exp/maxBar*100)}%" title="${money(b.exp)}"></div>
           </div><div class="bar-lbl">${b.label}</div></div>`).join('')}
       </div>
       <div style="display:flex;gap:16px;justify-content:center;margin-top:12px;font-size:12px;color:var(--muted)">
@@ -1221,14 +1336,21 @@ function renderEstatisticas(){
     <div class="card">
       <div class="card-title"><h2>Fluxo de Caixa</h2><span class="pill">Este mês</span></div>
       <div class="fluxo">
-        <div class="fx"><div class="k">Entradas</div><div class="v num" style="color:var(--green)">${R(ms.inc)}</div></div>
-        <div class="fx"><div class="k">Despesas</div><div class="v num" style="color:var(--red)">${R(ms.exp)}</div></div>
-        <div class="fx"><div class="k">Saldo do mês</div><div class="v num" style="color:var(--blue)">${R(ms.bal)}</div></div>
+        <div class="fx"><div class="k">Entradas</div><div class="v num" style="color:var(--green)">${money(ms.inc)}</div></div>
+        <div class="fx"><div class="k">Despesas</div><div class="v num" style="color:var(--red)">${money(ms.exp)}</div></div>
+        <div class="fx"><div class="k">Saldo do mês</div><div class="v num" style="color:var(--blue)">${money(ms.bal)}</div></div>
         <div class="fx"><div class="k">Taxa de poupança</div><div class="v num" style="color:var(--gold-d)">${ms.inc>0?Math.round(ms.bal/ms.inc*100):0}%</div></div>
       </div>
     </div>`;
   renderDonut(document.getElementById('statDonut'));
 }
+/* Gráfico de linha da evolução do saldo.
+
+   Observação:
+   Os gráficos são SVG montado à mão. Testei bibliotecas prontas, mas
+   todas pesavam mais que o app inteiro e exigiam internet para
+   carregar. Como os gráficos aqui são simples, sai mais leve assim —
+   e o app continua funcionando offline. */
 function lineChart(pts){
   if(pts.every(p=>p.val===0)) return `<div class="empty" style="padding:24px"><div class="e">📈</div><p>Ainda sem dados suficientes.</p></div>`;
   const W=400,H=160,pad=28;
@@ -1249,97 +1371,101 @@ function lineChart(pts){
 }
 
 /* ============================================================
-   RENDER: METAS
+   Tela: metas
    ============================================================ */
-function renderMetas(){
+// Tela de metas, com o progresso de cada uma.
+function renderGoals(){
   const el=document.getElementById('scr-metas');
-  const totalTarget=S.goals.reduce((s,g)=>s+g.target,0);
-  const totalSaved=S.goals.reduce((s,g)=>s+g.saved,0);
-  const goals = S.goals.length? S.goals.map(g=>{
+  const totalTarget=state.goals.reduce((s,g)=>s+g.target,0);
+  const totalSaved=state.goals.reduce((s,g)=>s+g.saved,0);
+  const goals = state.goals.length? state.goals.map(g=>{
     const p=Math.min(100,Math.round(g.saved/g.target*100));
     const falta=Math.max(0,g.target-g.saved);
     return `<div class="goal">
       <div class="g-top">
         <div class="g-emoji">${g.emoji}</div>
         <div style="flex:1"><div class="g-nm">${g.name}</div>
-          <div class="g-sub">${p}% concluído${falta>0?' · faltam '+R(falta):' · meta atingida! 🎉'}</div></div>
-        <button class="del-x" onclick="delGoal('${g.id}')">🗑</button>
+          <div class="g-sub">${p}% concluído${falta>0?' · faltam '+money(falta):' · meta atingida! 🎉'}</div></div>
+        <button class="del-x" onclick="deleteGoal('${g.id}')">🗑</button>
       </div>
       <div class="g-track"><div class="g-fill" style="width:${p}%"></div></div>
-      <div class="g-nums"><span>Guardado <b class="num" style="color:var(--gold-d)">${R(g.saved)}</b></span>
-        <span>Meta <b class="num">${R(g.target)}</b></span></div>
+      <div class="g-nums"><span>Guardado <b class="num" style="color:var(--gold-d)">${money(g.saved)}</b></span>
+        <span>Meta <b class="num">${money(g.target)}</b></span></div>
       <button class="g-add" onclick="addToGoal('${g.id}')">＋ Adicionar valor</button>
     </div>`;
   }).join('') : `<div class="empty"><div class="e">🎯</div><p>Crie sua primeira meta<br>e acompanhe o progresso.</p></div>`;
   el.innerHTML=`
     <div class="hero" style="margin-top:0;background:linear-gradient(135deg,var(--gold-d),#a16207)">
       <div class="lbl" style="color:rgba(255,255,255,.9)">Total guardado em metas</div>
-      <div class="val num">${R(totalSaved)}</div>
-      <div class="sub">de ${R(totalTarget)} planejados · ${totalTarget>0?Math.round(totalSaved/totalTarget*100):0}%</div>
+      <div class="val num">${money(totalSaved)}</div>
+      <div class="sub">de ${money(totalTarget)} planejados · ${totalTarget>0?Math.round(totalSaved/totalTarget*100):0}%</div>
     </div>
     ${goals}
     <button class="goal g-add" style="margin:2px 0 20px" onclick="openForm('meta')">＋ Criar nova meta</button>`;
 }
-function addToGoal(id){ const g=S.goals.find(x=>x.id===id); if(!g) return;
-  const v=prompt(`Adicionar valor à meta "${g.name}"\nGuardado atualmente: ${R(g.saved)}`,'');
-  const n=parseBR(v); if(n>0){ g.saved+=n; persist(); renderMetas(); toast('Valor adicionado à meta 🎯'); } }
-function delGoal(id){ if(!confirm('Excluir esta meta?')) return;
-  S.goals=S.goals.filter(g=>g.id!==id); persist(); renderMetas(); toast('Meta excluída'); }
+// Guarda um valor em uma meta.
+function addToGoal(id){ const g=state.goals.find(x=>x.id===id); if(!g) return;
+  const v=prompt(`Adicionar valor à meta "${g.name}"\nGuardado atualmente: ${money(g.saved)}`,'');
+  const n=parseAmount(v); if(n>0){ g.saved+=n; saveState(); renderGoals(); showToast('Valor adicionado à meta 🎯'); } }
+// Apaga uma meta.
+function deleteGoal(id){ if(!confirm('Excluir esta meta?')) return;
+  state.goals=state.goals.filter(g=>g.id!==id); saveState(); renderGoals(); showToast('Meta excluída'); }
 
 /* ============================================================
-   RENDER: INVESTIR (simulador de juros compostos)
+   Tela: simuladores (renda fixa e criptomoedas)
    ============================================================ */
-/* ============================================================
-   RENDER: INVESTIR — Simulação de Investimentos + Criptomoedas
-   ============================================================ */
-let simMode='invest';
-let simState={initial:1000,monthly:300,years:5,cdi:14.15,cdbPct:100,lciPct:90};
-const CRYPTOS={
+let simulatorMode='invest';
+let investmentInput={initial:1000,monthly:300,years:5,cdi:14.15,cdbPct:100,lciPct:90};
+const CRYPTO_COINS={
   BTC:{name:'Bitcoin',sym:'₿',c:'#f7931a'},
   ETH:{name:'Ethereum',sym:'Ξ',c:'#627eea'},
   SOL:{name:'Solana',sym:'◎',c:'#9945ff'}
 };
-let cryptoState={coin:'BTC',price:0,invest:0,target:0};
+let cryptoInput={coin:'BTC',price:0,invest:0,target:0};
 
-function renderInvestir(){
+// Tela dos simuladores, com o seletor de modo.
+function renderSimulator(){
   const el=document.getElementById('scr-investir');
-  const label=simMode==='cripto'?'🪙 Criptomoedas':'📊 Simulação de Investimentos';
+  const label=simulatorMode==='cripto'?'🪙 Criptomoedas':'📊 Simulação de Investimentos';
   el.innerHTML=`
     <div class="mode-dd">
-      <button class="mode-btn" onclick="toggleModeMenu()"><span>${label}</span><span class="mdd-ar">▾</span></button>
+      <button class="mode-btn" onclick="toggleSimulatorMenu()"><span>${label}</span><span class="mdd-ar">▾</span></button>
       <div class="mode-menu" id="modeMenu" style="display:none">
-        <button onclick="setSimMode('invest')">📊 Simulação de Investimentos</button>
-        <button onclick="setSimMode('cripto')">🪙 Criptomoedas</button>
+        <button onclick="setSimulatorMode('invest')">📊 Simulação de Investimentos</button>
+        <button onclick="setSimulatorMode('cripto')">🪙 Criptomoedas</button>
       </div>
     </div>
-    ${simMode==='cripto'?cryptoUI():investUI()}`;
-  if(simMode==='cripto') recalcCrypto(); else recalcInvest();
+    ${simulatorMode==='cripto'?cryptoFormHtml():investmentFormHtml()}`;
+  if(simulatorMode==='cripto') updateCryptoResults(); else updateInvestmentResults();
 }
-function toggleModeMenu(){ const m=document.getElementById('modeMenu'); if(m) m.style.display=m.style.display==='none'?'block':'none'; }
-function setSimMode(mode){ simMode=mode; renderInvestir(); }
+// Abre e fecha o menu de escolha do simulador.
+function toggleSimulatorMenu(){ const m=document.getElementById('modeMenu'); if(m) m.style.display=m.style.display==='none'?'block':'none'; }
+// Troca entre renda fixa e criptomoedas.
+function setSimulatorMode(mode){ simulatorMode=mode; renderSimulator(); }
 
-/* ---- Simulação de Investimentos (renda fixa, comparação com IR) ---- */
-function investUI(){
-  const s=simState;
+/* --- Simulador de renda fixa --- */
+// Campos do simulador de renda fixa.
+function investmentFormHtml(){
+  const s=investmentInput;
   return `
   <div class="card" style="margin-top:0">
     <div class="card-title"><h2>Simulador de Investimentos</h2><span class="pill">Renda fixa</span></div>
     <p class="sim-hint">Compare quanto o mesmo dinheiro renderia em cada investimento — já com o Imposto de Renda descontado.</p>
     <div class="field"><label>Valor inicial</label>
-      <div class="inp"><span>R$</span><input id="iiInitial" inputmode="decimal" value="${s.initial}" oninput="recalcInvest()"></div></div>
+      <div class="inp"><span>R$</span><input id="iiInitial" inputmode="decimal" value="${s.initial}" oninput="updateInvestmentResults()"></div></div>
     <div class="field"><label>Aporte mensal</label>
-      <div class="inp"><span>R$</span><input id="iiMonthly" inputmode="decimal" value="${s.monthly}" oninput="recalcInvest()"></div></div>
+      <div class="inp"><span>R$</span><input id="iiMonthly" inputmode="decimal" value="${s.monthly}" oninput="updateInvestmentResults()"></div></div>
     <div class="two-col">
       <div class="field"><label>Prazo (anos)</label>
-        <div class="inp"><input id="iiYears" inputmode="decimal" value="${s.years}" oninput="recalcInvest()"><span>anos</span></div></div>
+        <div class="inp"><input id="iiYears" inputmode="decimal" value="${s.years}" oninput="updateInvestmentResults()"><span>anos</span></div></div>
       <div class="field"><label>CDI/Selic hoje</label>
-        <div class="inp"><input id="iiCdi" inputmode="decimal" value="${s.cdi}" oninput="recalcInvest()"><span>% a.a.</span></div></div>
+        <div class="inp"><input id="iiCdi" inputmode="decimal" value="${s.cdi}" oninput="updateInvestmentResults()"><span>% a.a.</span></div></div>
     </div>
     <div class="two-col">
       <div class="field"><label>CDB (% do CDI)</label>
-        <div class="inp"><input id="iiCdb" inputmode="decimal" value="${s.cdbPct}" oninput="recalcInvest()"><span>%</span></div></div>
+        <div class="inp"><input id="iiCdb" inputmode="decimal" value="${s.cdbPct}" oninput="updateInvestmentResults()"><span>%</span></div></div>
       <div class="field"><label>LCI/LCA (% do CDI)</label>
-        <div class="inp"><input id="iiLci" inputmode="decimal" value="${s.lciPct}" oninput="recalcInvest()"><span>%</span></div></div>
+        <div class="inp"><input id="iiLci" inputmode="decimal" value="${s.lciPct}" oninput="updateInvestmentResults()"><span>%</span></div></div>
     </div>
   </div>
   <div class="card"><div class="card-title"><h2>Comparação</h2><span class="pill" id="iiPrazoLbl"></span></div>
@@ -1347,80 +1473,96 @@ function investUI(){
   </div>
   <div class="disclaimer">⚠️ <b>Aviso:</b> projeção educativa com base no CDI informado, nas regras atuais de IR (tabela regressiva) e da poupança (0,5%/mês). O IR é estimado pelo prazo total. Taxas mudam e rentabilidade passada não garante futura. Não é recomendação de investimento.</div>`;
 }
-function investFV(P,A,i,n){ let fv=P*Math.pow(1+i,n); fv += i>0?A*((Math.pow(1+i,n)-1)/i):A*n; return fv; }
-function irRate(days){ return days<=180?0.225:days<=360?0.20:days<=720?0.175:0.15; }
-function recalcInvest(){
-  const g=id=>parseBR((document.getElementById(id)||{}).value||'0');
-  const s=simState;
+/* Valor futuro de um aporte inicial somado a aportes mensais.
+
+   Observação:
+   A taxa anual é convertida para mensal pela equivalência composta
+   ((1+i)^(1/12)-1), e não dividindo por 12. Dividir por 12 é mais
+   simples, mas dá um resultado otimista demais em prazos longos. */
+function futureValue(P,A,i,n){ let fv=P*Math.pow(1+i,n); fv += i>0?A*((Math.pow(1+i,n)-1)/i):A*n; return fv; }
+/* Alíquota do imposto de renda conforme o prazo da aplicação.
+
+   Observação:
+   É a tabela regressiva vigente. Deixei em função separada justamente
+   porque essa tabela pode mudar por lei — assim é um lugar só para
+   alterar, sem mexer no resto do cálculo. */
+function incomeTaxRate(days){ return days<=180?0.225:days<=360?0.20:days<=720?0.175:0.15; }
+function updateInvestmentResults(){
+  const g=id=>parseAmount((document.getElementById(id)||{}).value||'0');
+  const s=investmentInput;
   s.initial=g('iiInitial'); s.monthly=g('iiMonthly'); s.years=Math.max(0,g('iiYears'));
   s.cdi=Math.max(0,g('iiCdi')); s.cdbPct=Math.max(0,g('iiCdb')); s.lciPct=Math.max(0,g('iiLci'));
   const n=Math.round(s.years*12), days=n*30, invested=s.initial+s.monthly*n;
-  const cdiA=s.cdi/100, mOf=a=>Math.pow(1+a,1/12)-1, ir=irRate(days);
+  const cdiA=s.cdi/100, mOf=a=>Math.pow(1+a,1/12)-1, ir=incomeTaxRate(days);
   const prods=[
     {name:'Poupança', m:0.005, taxed:false, note:'0,5%/mês · isento de IR', e:'🐷', c:'#0ea5e9'},
     {name:'Tesouro Selic', m:mOf(cdiA), taxed:true, note:'≈100% do CDI · IR regressivo', e:'🏛️', c:'#16a34a'},
-    {name:`CDB ${fmtN(s.cdbPct)}% CDI`, m:mOf(cdiA*s.cdbPct/100), taxed:true, note:`${fmtN(s.cdbPct)}% do CDI · IR regressivo`, e:'🏦', c:'#2563eb'},
-    {name:`LCI/LCA ${fmtN(s.lciPct)}% CDI`, m:mOf(cdiA*s.lciPct/100), taxed:false, note:`${fmtN(s.lciPct)}% do CDI · isento de IR`, e:'🌾', c:'#f59e0b'},
+    {name:`CDB ${formatNumber(s.cdbPct)}% CDI`, m:mOf(cdiA*s.cdbPct/100), taxed:true, note:`${formatNumber(s.cdbPct)}% do CDI · IR regressivo`, e:'🏦', c:'#2563eb'},
+    {name:`LCI/LCA ${formatNumber(s.lciPct)}% CDI`, m:mOf(cdiA*s.lciPct/100), taxed:false, note:`${formatNumber(s.lciPct)}% do CDI · isento de IR`, e:'🌾', c:'#f59e0b'},
   ];
   const rows=prods.map(p=>{
-    const fv=investFV(s.initial,s.monthly,p.m,n), gross=fv-invested;
+    const fv=futureValue(s.initial,s.monthly,p.m,n), gross=fv-invested;
     const irPaid=p.taxed?Math.max(0,gross)*ir:0, net=fv-irPaid, netGain=net-invested;
     const pct=invested>0?netGain/invested*100:0;
     return {...p,net,netGain,irPaid,pct};
   }).sort((a,b)=>b.net-a.net);
   const el=document.getElementById('invResult'); if(!el) return;
   const presets=[1,5,10,20,30], yNow=Math.round(s.years);
-  const presetRow=`<div class="prazo-row">${presets.map(y=>`<button class="prazo-chip${yNow===y?' on':''}" onclick="setPrazo(${y})">${y} ${y===1?'ano':'anos'}</button>`).join('')}</div>`;
+  const presetRow=`<div class="prazo-row">${presets.map(y=>`<button class="prazo-chip${yNow===y?' on':''}" onclick="setTermInYears(${y})">${y} ${y===1?'ano':'anos'}</button>`).join('')}</div>`;
   el.innerHTML=`
     ${presetRow}
-    <div class="inv-invested">Investindo <b>${fmtBRL(invested)}</b> em ${fmtN(s.years)} ${s.years==1?'ano':'anos'} (${n} meses)</div>
+    <div class="inv-invested">Investindo <b>${formatMoney(invested)}</b> em ${formatNumber(s.years)} ${s.years==1?'ano':'anos'} (${n} meses)</div>
     ${rows.map((p,i)=>`
       <div class="inv-card${i===0?' win':''}">
-        <div class="ic-ic" style="background:${hex2rgba(p.c,.14)};color:${p.c}">${p.e}</div>
+        <div class="ic-ic" style="background:${hexToRgba(p.c,.14)};color:${p.c}">${p.e}</div>
         <div class="ic-main">
           <div class="ic-name">${p.name}${i===0?' <span class="win-tag">🏆 melhor</span>':''}</div>
           <div class="ic-note">${p.note}</div>
-          <div class="ic-line">Valor final líquido: <b>${fmtBRL(p.net)}</b></div>
-          <div class="ic-sub">Rendeu <b style="color:var(--green)">${fmtBRL(p.netGain)}</b> · IR ${fmtBRL(p.irPaid)}</div>
+          <div class="ic-line">Valor final líquido: <b>${formatMoney(p.net)}</b></div>
+          <div class="ic-sub">Rendeu <b style="color:var(--green)">${formatMoney(p.netGain)}</b> · IR ${formatMoney(p.irPaid)}</div>
         </div>
-        <div class="ic-pct" style="color:${p.c}">+${pctBR(p.pct)}%</div>
+        <div class="ic-pct" style="color:${p.c}">+${formatPercent(p.pct)}%</div>
       </div>`).join('')}`;
   const lbl=document.getElementById('iiPrazoLbl'); if(lbl) lbl.textContent=`IR ${(ir*100).toFixed(1).replace('.',',')}%`;
 }
-function setPrazo(y){ simState.years=y; const f=document.getElementById('iiYears'); if(f) f.value=y; recalcInvest(); }
+function setTermInYears(y){ investmentInput.years=y; const f=document.getElementById('iiYears'); if(f) f.value=y; updateInvestmentResults(); }
 
-/* ---- Simulador de Criptomoedas (cenários) ---- */
-function cryptoUI(){
-  const cs=cryptoState, c=CRYPTOS[cs.coin];
+/* --- Simulador de criptomoedas --- */
+// Campos do simulador de criptomoedas.
+function cryptoFormHtml(){
+  const cs=cryptoInput, c=CRYPTO_COINS[cs.coin];
   return `
   <div class="card" style="margin-top:0">
     <div class="card-title"><h2>Simulador de Criptomoedas</h2><span class="pill">Cenários</span></div>
     <p class="sim-hint">Escolha a moeda, informe o preço de hoje e veja quanto você teria se o preço mudar.</p>
     <div class="crypto-chips">
-      ${Object.keys(CRYPTOS).map(k=>{const cc=CRYPTOS[k];const on=cs.coin===k;
-        return `<button class="cchip${on?' on':''}" style="${on?`background:${hex2rgba(cc.c,.16)};border-color:${cc.c};color:${cc.c}`:''}" onclick="pickCrypto('${k}')"><span class="cc-sym">${cc.sym}</span>${cc.name}</button>`;}).join('')}
+      ${Object.keys(CRYPTO_COINS).map(k=>{const cc=CRYPTO_COINS[k];const on=cs.coin===k;
+        return `<button class="cchip${on?' on':''}" style="${on?`background:${hexToRgba(cc.c,.16)};border-color:${cc.c};color:${cc.c}`:''}" onclick="selectCoin('${k}')"><span class="cc-sym">${cc.sym}</span>${cc.name}</button>`;}).join('')}
     </div>
     <div class="field"><label>Preço da ${c.name} hoje</label>
-      <div class="inp"><span>R$</span><input id="cyPrice" inputmode="decimal" value="${cs.price||''}" placeholder="quanto vale hoje" oninput="recalcCrypto()"></div></div>
+      <div class="inp"><span>R$</span><input id="cyPrice" inputmode="decimal" value="${cs.price||''}" placeholder="quanto vale hoje" oninput="updateCryptoResults()"></div></div>
     <div class="field"><label>Quanto você quer investir</label>
-      <div class="inp"><span>R$</span><input id="cyInvest" inputmode="decimal" value="${cs.invest||''}" placeholder="ex: 1.000" oninput="recalcCrypto()"></div></div>
+      <div class="inp"><span>R$</span><input id="cyInvest" inputmode="decimal" value="${cs.invest||''}" placeholder="ex: 1.000" oninput="updateCryptoResults()"></div></div>
     <div class="field"><label>Preço que você acha que vai chegar (opcional)</label>
-      <div class="inp"><span>R$</span><input id="cyTarget" inputmode="decimal" value="${cs.target||''}" placeholder="seu preço-alvo" oninput="recalcCrypto()"></div></div>
+      <div class="inp"><span>R$</span><input id="cyTarget" inputmode="decimal" value="${cs.target||''}" placeholder="seu preço-alvo" oninput="updateCryptoResults()"></div></div>
   </div>
   <div class="card"><div class="card-title"><h2>Resultado</h2></div><div id="cryptoResult"></div></div>
   <div class="card"><div class="card-title"><h2>Cenários rápidos</h2><span class="pill">e se...</span></div><div id="cryptoScenarios"></div></div>
   <div class="disclaimer">⚠️ <b>Aviso:</b> cripto é investimento de altíssimo risco e muito volátil. Isto é só uma simulação com os preços que você digitar — não é previsão nem recomendação. Você pode perder todo o valor investido.</div>`;
 }
-function pickCrypto(k){
+// Troca a moeda mantendo o que já foi digitado.
+function selectCoin(k){
   const p=document.getElementById('cyPrice'),inv=document.getElementById('cyInvest'),t=document.getElementById('cyTarget');
-  if(p) cryptoState.price=parseBR(p.value); if(inv) cryptoState.invest=parseBR(inv.value); if(t) cryptoState.target=parseBR(t.value);
-  cryptoState.coin=k; renderInvestir();
+  if(p) cryptoInput.price=parseAmount(p.value); if(inv) cryptoInput.invest=parseAmount(inv.value); if(t) cryptoInput.target=parseAmount(t.value);
+  cryptoInput.coin=k; renderSimulator();
 }
-function fmtCoin(x){ return Number(x||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:8}); }
-function recalcCrypto(){
-  const g=id=>parseBR((document.getElementById(id)||{}).value||'0');
-  const cs=cryptoState; cs.price=g('cyPrice'); cs.invest=g('cyInvest'); cs.target=g('cyTarget');
-  const c=CRYPTOS[cs.coin], res=document.getElementById('cryptoResult'), scn=document.getElementById('cryptoScenarios');
+// Formata a quantidade de moedas (cripto costuma ter muitas casas).
+function formatCoinAmount(x){ return Number(x||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:8}); }
+// Recalcula quantas moedas dá para comprar e os cenários de preço.
+function updateCryptoResults(){
+  const g=id=>parseAmount((document.getElementById(id)||{}).value||'0');
+  const cs=cryptoInput; cs.price=g('cyPrice'); cs.invest=g('cyInvest'); cs.target=g('cyTarget');
+  const c=CRYPTO_COINS[cs.coin], res=document.getElementById('cryptoResult'), scn=document.getElementById('cryptoScenarios');
   if(!res) return;
   if(!(cs.price>0)||!(cs.invest>0)){
     res.innerHTML=`<div class="empty" style="padding:20px"><div class="e">${c.sym}</div><p>Informe o preço de hoje e quanto quer investir.</p></div>`;
@@ -1431,54 +1573,55 @@ function recalcCrypto(){
   if(cs.target>0){
     const fut=coins*cs.target, gain=fut-cs.invest, pct=gain/cs.invest*100, up=gain>=0;
     target=`<div class="cy-target">
-      <div class="cyt-row"><span>No preço-alvo (${fmtBRL(cs.target)})</span><b>${fmtBRL(fut)}</b></div>
-      <div class="cyt-res" style="color:${up?'var(--green)':'var(--red)'}">${up?'📈 Lucro':'📉 Prejuízo'}: ${up?'+':''}${fmtBRL(gain)} (${up?'+':''}${pctBR(pct)}%)</div>
+      <div class="cyt-row"><span>No preço-alvo (${formatMoney(cs.target)})</span><b>${formatMoney(fut)}</b></div>
+      <div class="cyt-res" style="color:${up?'var(--green)':'var(--red)'}">${up?'📈 Lucro':'📉 Prejuízo'}: ${up?'+':''}${formatMoney(gain)} (${up?'+':''}${formatPercent(pct)}%)</div>
     </div>`;
   }
   res.innerHTML=`
     <div class="cy-buy">
-      <div class="cyb-ic" style="background:${hex2rgba(c.c,.16)};color:${c.c}">${c.sym}</div>
-      <div style="min-width:0"><div class="cyb-k">Com ${fmtBRL(cs.invest)} você compra</div>
-        <div class="cyb-v">${fmtCoin(coins)} ${cs.coin}</div>
-        <div class="cyb-s">ao preço de ${fmtBRL(cs.price)} cada</div></div>
+      <div class="cyb-ic" style="background:${hexToRgba(c.c,.16)};color:${c.c}">${c.sym}</div>
+      <div style="min-width:0"><div class="cyb-k">Com ${formatMoney(cs.invest)} você compra</div>
+        <div class="cyb-v">${formatCoinAmount(coins)} ${cs.coin}</div>
+        <div class="cyb-s">ao preço de ${formatMoney(cs.price)} cada</div></div>
     </div>${target}`;
   if(scn){
     const list=[{l:'📉 Cair 50%',m:0.5},{l:'2x — dobrar',m:2},{l:'3x',m:3},{l:'5x',m:5},{l:'10x',m:10},{l:'🚀 100x',m:100}];
     scn.innerHTML=list.map(sc=>{ const val=coins*cs.price*sc.m, gain=val-cs.invest, up=gain>=0;
       return `<div class="scn-row">
-        <div class="scn-l">${sc.l}<span class="scn-price">preço ${fmtBRL(cs.price*sc.m)}</span></div>
-        <div class="scn-r"><b>${fmtBRL(val)}</b><span style="color:${up?'var(--green)':'var(--red)'}">${up?'+':''}${fmtBRL(gain)}</span></div>
+        <div class="scn-l">${sc.l}<span class="scn-price">preço ${formatMoney(cs.price*sc.m)}</span></div>
+        <div class="scn-r"><b>${formatMoney(val)}</b><span style="color:${up?'var(--green)':'var(--red)'}">${up?'+':''}${formatMoney(gain)}</span></div>
       </div>`; }).join('');
   }
 }
 
 /* ============================================================
-   RENDER: MAIS (config + insights)
+   Tela: Mais (ajustes e análises)
    ============================================================ */
-function renderMais(){
+// Tela "Mais": perfil, preferências, dados e análises.
+function renderSettings(){
   const el=document.getElementById('scr-mais');
   el.innerHTML=`
     <div class="card" style="margin-top:0">
       <div style="display:flex;align-items:center;gap:14px">
         <div style="width:56px;height:56px;border-radius:50%;background:var(--navy);color:var(--gold);
-          display:grid;place-items:center;font-size:26px;font-weight:800">${S.user.name[0]||'U'}</div>
-        <div><div style="font-size:17px;font-weight:800">${S.user.name}</div>
-          <div style="font-size:12.5px;color:var(--muted)">${greeting()}! 👋</div></div>
+          display:grid;place-items:center;font-size:26px;font-weight:800">${(state.user.name||'?')[0]}</div>
+        <div><div style="font-size:17px;font-weight:800">${state.user.name||'Toque para colocar seu nome'}</div>
+          <div style="font-size:12.5px;color:var(--muted)">${greetingText()}! 👋</div></div>
         <button class="hdr-icn" style="margin-left:auto;background:var(--surface-2);color:var(--text)" onclick="editName()">✏️</button>
       </div>
     </div>
 
     <div class="sec-label">Central</div>
-    <div class="set-row" onclick="go('carteiras')">
-      <div class="s-ic">👛</div><div class="s-mid"><div class="s-t">Carteiras</div><div class="s-d">${S.wallets.length} carteiras · ${R(totalBalance())}</div></div>
+    <div class="set-row" onclick="showScreen('carteiras')">
+      <div class="s-ic">👛</div><div class="s-mid"><div class="s-t">Carteiras</div><div class="s-d">${state.wallets.length} carteiras · ${money(totalBalance())}</div></div>
       <div class="s-arrow">›</div></div>
-    <div class="set-row" onclick="go('metas')">
-      <div class="s-ic">🎯</div><div class="s-mid"><div class="s-t">Metas Financeiras</div><div class="s-d">${S.goals.length} metas ativas</div></div>
+    <div class="set-row" onclick="showScreen('metas')">
+      <div class="s-ic">🎯</div><div class="s-mid"><div class="s-t">Metas Financeiras</div><div class="s-d">${state.goals.length} metas ativas</div></div>
       <div class="s-arrow">›</div></div>
-    <div class="set-row" onclick="go('investir')">
+    <div class="set-row" onclick="showScreen('investir')">
       <div class="s-ic">📈</div><div class="s-mid"><div class="s-t">Investir</div><div class="s-d">Simulador de juros compostos</div></div>
       <div class="s-arrow">›</div></div>
-    <div class="set-row" onclick="go('estatisticas')">
+    <div class="set-row" onclick="showScreen('estatisticas')">
       <div class="s-ic">📊</div><div class="s-mid"><div class="s-t">Relatórios</div><div class="s-d">Gráficos e estatísticas</div></div>
       <div class="s-arrow">›</div></div>
 
@@ -1487,14 +1630,14 @@ function renderMais(){
 
     <div class="sec-label">Preferências</div>
     <div class="set-row" onclick="toggleTheme()">
-      <div class="s-ic">${S.settings.theme==='dark'?'🌙':'☀️'}</div>
-      <div class="s-mid"><div class="s-t">Modo Escuro</div><div class="s-d">Tema ${S.settings.theme==='dark'?'escuro ativo':'claro ativo'}</div></div>
-      <div class="toggle ${S.settings.theme==='dark'?'on':''}"></div>
+      <div class="s-ic">${state.settings.theme==='dark'?'🌙':'☀️'}</div>
+      <div class="s-mid"><div class="s-t">Modo Escuro</div><div class="s-d">Tema ${state.settings.theme==='dark'?'escuro ativo':'claro ativo'}</div></div>
+      <div class="toggle ${state.settings.theme==='dark'?'on':''}"></div>
     </div>
-    <div class="set-row" onclick="toggleHide()">
+    <div class="set-row" onclick="toggleHiddenValues()">
       <div class="s-ic">👁️</div>
       <div class="s-mid"><div class="s-t">Ocultar saldos</div><div class="s-d">Esconde valores na tela</div></div>
-      <div class="toggle ${S.settings.hideValues?'on':''}"></div>
+      <div class="toggle ${state.settings.hideValues?'on':''}"></div>
     </div>
 
     <div class="sec-label">Dados</div>
@@ -1517,25 +1660,31 @@ function renderMais(){
   renderInsights();
 }
 
-/* ---------- Assistente financeiro (regras, funciona offline) ---------- */
+/* Análises automáticas do mês.
+
+   Observação:
+   Preferi regras simples e fixas a qualquer coisa que dependesse de
+   internet. O app precisa funcionar offline, e regras assim são
+   fáceis de conferir e de ajustar depois. */
+// Gera as análises do mês.
 function renderInsights(){
   const box=document.getElementById('insights'); if(!box) return;
-  const ms=monthStats();
-  const cats=expenseByCat();
+  const ms=monthSummary();
+  const cats=expensesByCategory();
   const ins=[];
   // 1. saldo do mês
   if(ms.bal>=0 && ms.inc>0){
-    ins.push({t:'ok',ic:'✅',html:`Você está no <b>azul</b> este mês: sobrou <b>${R(ms.bal)}</b>. Uma boa taxa de poupança é guardar pelo menos 10–20% da renda.`});
+    ins.push({t:'ok',ic:'✅',html:`Você está no <b>azul</b> este mês: sobrou <b>${money(ms.bal)}</b>. Uma boa taxa de poupança é guardar pelo menos 10–20% da renda.`});
   } else if(ms.bal<0){
-    ins.push({t:'bad',ic:'🚨',html:`Suas despesas superaram as entradas em <b>${R(-ms.bal)}</b> este mês. Vale revisar os maiores gastos abaixo.`});
+    ins.push({t:'bad',ic:'🚨',html:`Suas despesas superaram as entradas em <b>${money(-ms.bal)}</b> este mês. Vale revisar os maiores gastos abaixo.`});
   }
   // 2. maior categoria
   if(cats.length && ms.inc>0){
     const top=cats[0]; const share=Math.round(top.val/ms.inc*100);
     if(share>=40){
-      ins.push({t:'warn',ic:'⚠️',html:`Você gastou <b>${share}%</b> da sua renda com <b>${top.cat}</b> (${R(top.val)}). Isso está acima do recomendado — tente reduzir cerca de <b>${R(top.val*0.25)}</b>.`});
+      ins.push({t:'warn',ic:'⚠️',html:`Você gastou <b>${share}%</b> da sua renda com <b>${top.cat}</b> (${money(top.val)}). Isso está acima do recomendado — tente reduzir cerca de <b>${money(top.val*0.25)}</b>.`});
     } else {
-      ins.push({t:'ok',ic:'💡',html:`Seu maior gasto é <b>${top.cat}</b> (${R(top.val)}, ${share}% da renda). Está dentro de um patamar saudável.`});
+      ins.push({t:'ok',ic:'💡',html:`Seu maior gasto é <b>${top.cat}</b> (${money(top.val)}, ${share}% da renda). Está dentro de um patamar saudável.`});
     }
   }
   // 3. projeção de saldo
@@ -1545,16 +1694,16 @@ function renderInsights(){
     if(daily>0){
       const daysLeft=Math.floor(tb/daily);
       if(daysLeft<20 && tb>0){
-        ins.push({t:'bad',ic:'📉',html:`No ritmo atual de gastos (~${R(daily)}/dia), seu saldo total duraria cerca de <b>${daysLeft} dias</b>. Fique atento.`});
+        ins.push({t:'bad',ic:'📉',html:`No ritmo atual de gastos (~${money(daily)}/dia), seu saldo total duraria cerca de <b>${daysLeft} dias</b>. Fique atento.`});
       } else {
-        ins.push({t:'ok',ic:'📊',html:`Você gasta em média <b>${R(daily)}</b> por dia. No ritmo atual, seu saldo cobre os gastos por bastante tempo.`});
+        ins.push({t:'ok',ic:'📊',html:`Você gasta em média <b>${money(daily)}</b> por dia. No ritmo atual, seu saldo cobre os gastos por bastante tempo.`});
       }
     }
   }
   // 4. benefícios sobrando
-  const va=walletById('va'), vr=walletById('vr');
+  const va=findWallet('va'), vr=findWallet('vr');
   if(va && va.balance>500){
-    ins.push({t:'ok',ic:'🍽️',html:`Você tem <b>${R(va.balance)}</b> no Vale Alimentação. Lembre-se de usá-lo antes de gastar do banco no mercado.`});
+    ins.push({t:'ok',ic:'🍽️',html:`Você tem <b>${money(va.balance)}</b> no Vale Alimentação. Lembre-se de usá-lo antes de gastar do banco no mercado.`});
   }
   if(ins.length===0) ins.push({t:'ok',ic:'👋',html:`Adicione algumas transações e eu começo a analisar seus gastos e trazer sugestões por aqui.`});
 
@@ -1562,13 +1711,22 @@ function renderInsights(){
     <div class="i-ic ins-${i.t}">${i.ic}</div><div class="i-tx">${i.html}</div></div>`).join('');
 }
 
+/* ---------------------------------------------------------------
+   6. FORMULÁRIOS DE LANÇAMENTO
+   --------------------------------------------------------------- */
+
 /* ============================================================
-   FORMULÁRIOS (tela cheia)
+   Abertura e fechamento
    ============================================================ */
-let formType=null, formSub='receita';
+let openFormType=null, formSubtype='receita';
+// Abre o formulário em tela cheia.
 function openForm(type){
-  closeFab();
-  formType=type;
+  // Quando o formulário vem do menu +, a entrada de histórico dele é
+  // reaproveitada — assim um toque no voltar não precisa desfazer dois passos.
+  const veioDoMenu=fabHistoryEntry;
+  hideFab(); fabHistoryEntry=false;
+  if(!veioDoMenu) pushHistoryEntry();
+  openFormType=type;
   const cfg={
     receita:{title:'Nova Entrada',theme:'green',color:'#16a34a'},
     despesa:{title:'Nova Despesa',theme:'red',color:'#dc2626'},
@@ -1578,25 +1736,45 @@ function openForm(type){
   }[type];
   const mount=document.getElementById('formMount');
   pendingItems=[];
-  if(type==='meta') mount.innerHTML=metaForm(cfg);
-  else if(type==='receita'||type==='despesa') mount.innerHTML=multiForm(type,cfg);
-  else mount.innerHTML=singleForm(type,cfg);
+  if(type==='meta') mount.innerHTML=goalForm(cfg);
+  else if(type==='receita'||type==='despesa') mount.innerHTML=multiEntryFormHtml(type,cfg);
+  else mount.innerHTML=singleEntryFormHtml(type,cfg);
   requestAnimationFrame(()=>document.querySelector('.form-screen').classList.add('show'));
-  if(type==='receita'||type==='despesa'){ initEntry(type); recalcTotal(type); renderSaved(type); }
+  if(type==='receita'||type==='despesa'){ setupEntryFields(type); updateFormTotal(type); renderSavedEntries(type); }
   const amt=document.getElementById('fAmount'); if(amt) setTimeout(()=>amt.focus(),300);
 }
+// Fecha o formulário e redesenha a tela que estava atrás.
 function closeForm(){
+  if(historyDepth>0 && document.querySelector('.form-screen')){ history.back(); return; }
+  applyCloseForm();
+}
+
+// Fecha o formulário de fato (chamada pelo popstate).
+function applyCloseForm(){
   const fs=document.querySelector('.form-screen'); if(!fs) return;
   fs.classList.remove('show');
   setTimeout(()=>{ document.getElementById('formMount').innerHTML=''; renderAll(); },300);
 }
-function walletOptions(sel){ return S.wallets.map(w=>`<option value="${w.id}" ${sel===w.id?'selected':''}>${w.emoji} ${w.name} — ${R(w.balance)}</option>`).join(''); }
-function catOptionsInc(){ return Object.keys(CAT_RECEITA).map(k=>`<option value="${k}">${CAT_RECEITA[k].e} ${k}</option>`).join(''); }
-function catOptionsDesp(){ return Object.keys(CAT_DESPESA).map(k=>`<option value="${k}">${CAT_DESPESA[k].e} ${k}</option>`).join(''); }
+// Opções do seletor de carteira.
+function walletOptions(sel){ return state.wallets.map(w=>`<option value="${w.id}" ${sel===w.id?'selected':''}>${w.emoji} ${w.name} — ${money(w.balance)}</option>`).join(''); }
+// Opções de categoria de entrada.
+function incomeCategoryOptions(){ return Object.keys(INCOME_CATEGORIES).map(k=>`<option value="${k}">${INCOME_CATEGORIES[k].e} ${k}</option>`).join(''); }
+// Opções de categoria de despesa.
+function expenseCategoryOptions(){ return Object.keys(EXPENSE_CATEGORIES).map(k=>`<option value="${k}">${EXPENSE_CATEGORIES[k].e} ${k}</option>`).join(''); }
 
-/* ---------- Formulário: 1 entrada + lista acumulada e editável ---------- */
+/* ============================================================
+   Formulário de várias entradas
+
+   Observação:
+   A ideia aqui é lançar várias coisas de uma vez sem sair da tela.
+   O usuário preenche um bloco, toca em "Inserir" e o item vai para
+   uma lista temporária; só ao salvar é que tudo vira transação.
+   Fiz assim porque, na prática, quem lança gasto costuma lançar
+   três ou quatro de uma vez — abrir e fechar o formulário a cada
+   item deixava o uso cansativo. */
 let pendingItems=[];
-function multiForm(type,cfg){
+// Formulário que aceita vários lançamentos seguidos.
+function multiEntryFormHtml(type,cfg){
   const today=new Date().toISOString().slice(0,10);
   const isDesp=type==='despesa';
   const totalLabel=isDesp?'Total das despesas — soma automática':'Total das entradas — soma automática';
@@ -1613,80 +1791,86 @@ function multiForm(type,cfg){
       </div>
       <div class="form-total-sub">${totalLabel}</div>
 
-      <div class="entry-row" id="entryBlock">${entryInner(type)}</div>
+      <div class="entry-row" id="entryBlock">${entryFieldsHtml(type)}</div>
 
       <div class="field" style="margin-top:16px"><label>Data</label>
         <div class="inp"><input id="fDate" type="date" value="${today}"></div></div>
       <div class="field"><label>Observação (opcional)</label>
         <div class="inp"><textarea id="fNote" placeholder="Adicione uma observação..."></textarea></div></div>
 
-      <button type="button" class="add-row-btn ${cfg.theme}" onclick="insertItem('${type}')">${addLabel}</button>
+      <button type="button" class="add-row-btn ${cfg.theme}" onclick="addPendingItem('${type}')">${addLabel}</button>
 
       <div id="itemsList"></div>
 
-      <button class="save-btn ${cfg.theme}" onclick="saveMulti('${type}')">${saveLabel}</button>
+      <button class="save-btn ${cfg.theme}" onclick="savePendingEntries('${type}')">${saveLabel}</button>
 
       <div id="savedList"></div>
     </div></div>`;
 }
 /* conteúdo interno do bloco de UM item (reaproveitado ao resetar) */
-function entryInner(type){
+// Bloco de campos de um lançamento.
+function entryFieldsHtml(type){
   const isDesp=type==='despesa';
   const valLabel=isDesp?'R$ da despesa':'Valor R$';
-  const catOpts=isDesp?catOptionsDesp():catOptionsInc();
+  const catOpts=isDesp?expenseCategoryOptions():incomeCategoryOptions();
   return `<div class="entry-head"><span class="entry-n">Novo item</span></div>
     <div class="field"><label>Categoria</label>
-      <div class="inp"><select data-role="cat" onchange="onRowCat(this,'${type}')">${catOpts}</select></div></div>
+      <div class="inp"><select data-role="cat" onchange="onCategoryChange(this,'${type}')">${catOpts}</select></div></div>
     <div class="field"><label>${valLabel}</label>
-      <div class="inp"><span>R$</span><input data-role="val" inputmode="decimal" placeholder="0,00" oninput="maskMoney(this);recalcTotal('${type}')"></div></div>
+      <div class="inp"><span>R$</span><input data-role="val" inputmode="decimal" placeholder="0,00" oninput="formatMoneyInput(this);updateFormTotal('${type}')"></div></div>
     <div data-role="extra"></div>`;
 }
-function initEntry(type){
+// Prepara os campos extras logo que o formulário abre.
+function setupEntryFields(type){
   const blk=document.getElementById('entryBlock'); if(!blk) return;
-  const sel=blk.querySelector('[data-role=cat]'); if(sel) onRowCat(sel,type);
+  const sel=blk.querySelector('[data-role=cat]'); if(sel) onCategoryChange(sel,type);
 }
-function resetEntry(type){
+// Limpa os campos para o próximo lançamento.
+function clearEntryFields(type){
   const blk=document.getElementById('entryBlock'); if(!blk) return;
-  blk.innerHTML=entryInner(type);
-  initEntry(type);
+  blk.innerHTML=entryFieldsHtml(type);
+  setupEntryFields(type);
 }
 /* mostra "Descontar de" / "Nome" conforme a categoria (despesa) */
-function onRowCat(sel,type){
+// Mostra os campos extras que a categoria escolhida exige.
+function onCategoryChange(sel,type){
   if(type!=='despesa') return;
   const blk=sel.closest('.entry-row'); const extra=blk.querySelector('[data-role=extra]'); const cat=sel.value;
-  if(SPECIAL_DESPESA.includes(cat)){
-    const opts=DESCONTAR_OPTS.map(o=>`<option value="${o.key}">${o.label}</option>`).join('');
+  if(EXPENSES_WITH_SOURCE.includes(cat)){
+    const opts=PAYMENT_SOURCES.map(o=>`<option value="${o.key}">${o.label}</option>`).join('');
     extra.innerHTML=`<div class="field"><label>Descontar de</label>
-      <div class="inp"><select data-role="src" onchange="onSrcChange(this)">${opts}</select></div></div>
+      <div class="inp"><select data-role="src" onchange="onSourceChange(this)">${opts}</select></div></div>
       <div data-role="hint"></div>`;
     const src=extra.querySelector('[data-role=src]');
     if(cat==='Mercado') src.value='valim';
     else if(cat==='Transporte') src.value='vtransp';
-    onSrcChange(src);
+    onSourceChange(src);
   } else if(cat==='Outros'){
     extra.innerHTML=`<div class="field"><label>Nome da despesa (aparece no gráfico)</label>
       <div class="inp"><input data-role="custom" placeholder="Ex: Presente, Pet, Doação..."></div></div>`;
   } else { extra.innerHTML=''; }
 }
-function onSrcChange(sel){
+// Mostra o saldo disponível da origem escolhida.
+function onSourceChange(sel){
   const extra=sel.closest('[data-role=extra]'); const hint=extra.querySelector('[data-role=hint]'); if(!hint) return;
-  const opt=DESCONTAR_OPTS.find(o=>o.key===sel.value); const benefit=NO_TOTAL_WALLETS.includes(opt.wallet);
+  const opt=PAYMENT_SOURCES.find(o=>o.key===sel.value); const benefit=BENEFIT_WALLETS.includes(opt.wallet);
   hint.innerHTML = benefit
     ? `<div class="suggest">✅ Pago com vale — <b style="margin:0 3px">não</b> desconta do seu saldo total.</div>`
     : `<div class="suggest" style="background:var(--blue-soft);color:var(--blue)">💠 Desconta do seu saldo (conta).</div>`;
 }
 /* lê o item que está sendo montado no bloco */
-function readEntry(type){
+// Lê os campos preenchidos e devolve um item.
+function readEntryFields(type){
   const blk=document.getElementById('entryBlock'); if(!blk) return null;
   const catSel=blk.querySelector('[data-role=cat]'); if(!catSel) return null;
   const cat=catSel.value;
   const valEl=blk.querySelector('[data-role=val]');
-  const val=parseBR(valEl?valEl.value:'');
+  const val=parseAmount(valEl?valEl.value:'');
   let src=null, name=cat, wallet;
-  if(type==='receita'){ wallet=INCOME_WALLET[cat]||'banco'; }
-  else if(SPECIAL_DESPESA.includes(cat)){
+  if(type==='receita'){ wallet=INCOME_TARGET_WALLET[cat]||'banco'; }
+  else if(EXPENSES_WITH_SOURCE.includes(cat)){
     const s=blk.querySelector('[data-role=src]'); src=s?s.value:'sal';
-    const opt=DESCONTAR_OPTS.find(o=>o.key===src); wallet=opt?opt.wallet:'banco';
+    const opt=PAYMENT_SOURCES.find(o=>o.key===src); wallet=opt?opt.wallet:'banco';
   } else if(cat==='Outros'){
     const c=blk.querySelector('[data-role=custom]'); if(c&&c.value.trim()) name=c.value.trim(); wallet='banco';
   } else { wallet='banco'; }
@@ -1694,134 +1878,150 @@ function readEntry(type){
   return {cat,val,src,name,wallet,note};
 }
 /* adiciona o item à lista abaixo e limpa o bloco pro próximo */
-function insertItem(type){
-  const e=readEntry(type); if(!e) return;
-  if(!(e.val>0)){ toast('Informe o valor do item'); return; }
-  if(type==='despesa' && e.cat==='Outros' && (!e.name || e.name==='Outros')){ toast('Dê um nome à despesa "Outros"'); return; }
+// Põe o lançamento atual na lista temporária.
+function addPendingItem(type){
+  const e=readEntryFields(type); if(!e) return;
+  if(!(e.val>0)){ showToast('Informe o valor do item'); return; }
+  if(type==='despesa' && e.cat==='Outros' && (!e.name || e.name==='Outros')){ showToast('Dê um nome à despesa "Outros"'); return; }
   pendingItems.push(e);
-  renderList(type);
-  resetEntry(type);
+  renderPendingItems(type);
+  clearEntryFields(type);
   const noteEl=document.getElementById('fNote'); if(noteEl) noteEl.value='';
-  recalcTotal(type);
+  updateFormTotal(type);
 }
 /* lista acumulada — valor editável + remover */
-function renderList(type){
+// Mostra a lista temporária, ainda não salva.
+function renderPendingItems(type){
   const box=document.getElementById('itemsList'); if(!box) return;
   if(!pendingItems.length){ box.innerHTML=''; return; }
   const head=`<div class="items-head">Itens adicionados (${pendingItems.length})</div>`;
   box.innerHTML=head+pendingItems.map((it,i)=>{
-    const info=catInfo(type,it.cat);
+    const info=categoryInfo(type,it.cat);
     const emoji=(type==='despesa'&&it.cat==='Outros')?'📦':info.e;
-    const srcTxt=it.src?('· '+((DESCONTAR_OPTS.find(o=>o.key===it.src)||{}).label||'').replace(/^\S+\s/,'')):'';
+    const srcTxt=it.src?('· '+((PAYMENT_SOURCES.find(o=>o.key===it.src)||{}).label||'').replace(/^\S+\s/,'')):'';
     const sub=it.note?('📝 '+it.note):srcTxt;
     const v=it.val.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
     return `<div class="litem">
-      <div class="li-ic" style="background:${hex2rgba(info.c,.14)};color:${info.c}">${emoji}</div>
+      <div class="li-ic" style="background:${hexToRgba(info.c,.14)};color:${info.c}">${emoji}</div>
       <div class="li-main"><div class="li-name">${it.name}</div>${sub?`<div class="li-sub">${sub}</div>`:''}</div>
-      <div class="li-val"><span>R$</span><input inputmode="decimal" value="${v}" oninput="maskMoney(this);editItemVal(${i},this,'${type}')"></div>
-      <button type="button" class="li-del" title="Remover" onclick="removeItem(${i},'${type}')">🗑</button>
+      <div class="li-val"><span>R$</span><input inputmode="decimal" value="${v}" oninput="formatMoneyInput(this);updatePendingValue(${i},this,'${type}')"></div>
+      <button type="button" class="li-del" title="Remover" onclick="removePendingItem(${i},'${type}')">🗑</button>
     </div>`;
   }).join('');
 }
-function editItemVal(i,el,type){ if(pendingItems[i]) pendingItems[i].val=parseBR(el.value); recalcTotal(type); }
-function removeItem(i,type){ pendingItems.splice(i,1); renderList(type); recalcTotal(type); }
+// Edita o valor de um item da lista temporária.
+function updatePendingValue(i,el,type){ if(pendingItems[i]) pendingItems[i].val=parseAmount(el.value); updateFormTotal(type); }
+// Tira um item da lista temporária.
+function removePendingItem(i,type){ pendingItems.splice(i,1); renderPendingItems(type); updateFormTotal(type); }
 /* total = soma da lista + item que está sendo montado */
-function recalcTotal(type){
+// Atualiza o total mostrado no rodapé do formulário.
+function updateFormTotal(type){
   let sum=pendingItems.reduce((s,it)=>s+(it.val||0),0);
-  const cur=readEntry(type); if(cur) sum+=cur.val||0;
+  const cur=readEntryFields(type); if(cur) sum+=cur.val||0;
   const el=document.getElementById('formTotal');
   if(el) el.textContent=sum.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
 }
-function saveMulti(type){
-  const cur=readEntry(type);
+/* Salva os lançamentos e atualiza os saldos.
+
+   Observação:
+   O formulário continua aberto depois de salvar, mostrando embaixo o
+   que já foi lançado no mês. Assim dá para conferir na hora e
+   corrigir um valor digitado errado sem ter que procurar a transação
+   depois na lista. */
+function savePendingEntries(type){
+  const cur=readEntryFields(type);
   if(cur && cur.val>0){
-    if(type==='despesa' && cur.cat==='Outros' && (!cur.name || cur.name==='Outros')){ toast('Dê um nome à despesa "Outros"'); return; }
+    if(type==='despesa' && cur.cat==='Outros' && (!cur.name || cur.name==='Outros')){ showToast('Dê um nome à despesa "Outros"'); return; }
     pendingItems.push(cur);
   }
-  if(!pendingItems.length){ toast('Adicione ao menos um item'); return; }
+  if(!pendingItems.length){ showToast('Adicione ao menos um item'); return; }
   const date=(document.getElementById('fDate').value)||new Date().toISOString().slice(0,10);
   const n=pendingItems.length;
   pendingItems.forEach(it=>{
-    const w=walletById(it.wallet);
+    const w=findWallet(it.wallet);
     if(type==='receita'){
       if(w) w.balance+=it.val;
-      const tx={id:t(),type:'receita',cat:it.cat,desc:it.name,amount:it.val,date,wallet:it.wallet};
-      if(it.note) tx.note=it.note; S.transactions.push(tx);
+      const tx={id:newId(),type:'receita',cat:it.cat,desc:it.name,amount:it.val,date,wallet:it.wallet};
+      if(it.note) tx.note=it.note; state.transactions.push(tx);
     } else {
       if(w) w.balance-=it.val;
-      const tx={id:t(),type:'despesa',cat:it.name,desc:it.name,amount:it.val,date,wallet:it.wallet};
-      if(it.note) tx.note=it.note; if(it.src) tx.src=it.src; S.transactions.push(tx);
+      const tx={id:newId(),type:'despesa',cat:it.name,desc:it.name,amount:it.val,date,wallet:it.wallet};
+      if(it.note) tx.note=it.note; if(it.src) tx.src=it.src; state.transactions.push(tx);
     }
   });
   pendingItems=[];
-  persist();
+  saveState();
   // não fecha: limpa o item + observação, atualiza listas e mostra os salvos abaixo
-  renderList(type); resetEntry(type);
+  renderPendingItems(type); clearEntryFields(type);
   const noteEl=document.getElementById('fNote'); if(noteEl) noteEl.value='';
-  recalcTotal(type); renderSaved(type);
+  updateFormTotal(type); renderSavedEntries(type);
   const savedBox=document.getElementById('savedList'); if(savedBox&&savedBox.scrollIntoView){ try{savedBox.scrollIntoView({behavior:'smooth',block:'nearest'});}catch(e){} }
-  toast(type==='receita'?`${n} entrada(s) salva(s) ✅`:`${n} despesa(s) salva(s) 💸`);
+  showToast(type==='receita'?`${n} entrada(s) salva(s) ✅`:`${n} despesa(s) salva(s) 💸`);
 }
 /* despesas/entradas JÁ salvas deste mês — com editar e excluir */
-function renderSaved(type){
+// Lista o que já foi salvo neste mês, para conferir e corrigir.
+function renderSavedEntries(type){
   const box=document.getElementById('savedList'); if(!box) return;
-  const mk=curMonth();
-  const list=S.transactions.filter(x=>x.type===type && monthKey(x.date)===mk)
+  const mk=currentMonth();
+  const list=state.transactions.filter(x=>x.type===type && toMonthKey(x.date)===mk)
     .sort((a,b)=>b.date.localeCompare(a.date));
   if(!list.length){ box.innerHTML=''; return; }
-  const mes=MESES[new Date().getMonth()];
+  const mes=MONTH_NAMES[new Date().getMonth()];
   const titulo=type==='receita'?`Entradas salvas · ${mes}`:`Despesas salvas · ${mes}`;
   box.innerHTML=`<div class="saved-head">${titulo} (${list.length})</div>`+list.map(x=>{
-    const info=catInfo(type,x.cat);
-    const srcTxt=x.src?((DESCONTAR_OPTS.find(o=>o.key===x.src)||{}).label||'').replace(/^\S+\s/,''):'';
+    const info=categoryInfo(type,x.cat);
+    const srcTxt=x.src?((PAYMENT_SOURCES.find(o=>o.key===x.src)||{}).label||'').replace(/^\S+\s/,''):'';
     const sub=x.note?('📝 '+x.note):srcTxt;
     return `<div class="litem">
-      <div class="li-ic" style="background:${hex2rgba(info.c,.14)};color:${info.c}">${info.e}</div>
+      <div class="li-ic" style="background:${hexToRgba(info.c,.14)};color:${info.c}">${info.e}</div>
       <div class="li-main"><div class="li-name">${x.desc||x.cat}</div>${sub?`<div class="li-sub">${sub}</div>`:''}</div>
-      <div class="li-fixed num">${R(x.amount)}</div>
-      <button type="button" class="li-edit" title="Editar" onclick="editSaved('${x.id}','${type}')">✏️</button>
-      <button type="button" class="li-del" title="Excluir" onclick="deleteSaved('${x.id}','${type}')">🗑</button>
+      <div class="li-fixed num">${money(x.amount)}</div>
+      <button type="button" class="li-edit" title="Editar" onclick="editSavedEntry('${x.id}','${type}')">✏️</button>
+      <button type="button" class="li-del" title="Excluir" onclick="deleteSavedEntry('${x.id}','${type}')">🗑</button>
     </div>`;
   }).join('');
 }
-function findTx(id){ return S.transactions.find(x=>x.id===id); }
-function refundTx(x){ const w=walletById(x.wallet); if(w){ if(x.type==='receita') w.balance-=x.amount; else w.balance+=x.amount; } }
-function deleteSaved(id,type){
-  const x=findTx(id); if(!x) return;
-  if(!confirm(`Excluir "${x.desc||x.cat}" de ${R(x.amount)}?`)) return;
-  refundTx(x);
-  S.transactions=S.transactions.filter(t2=>t2.id!==id);
-  persist(); renderSaved(type); recalcTotal(type);
-  toast('Excluído 🗑');
+// Procura uma transação pelo identificador.
+function findTransaction(id){ return state.transactions.find(x=>x.id===id); }
+// Apaga um lançamento já salvo e devolve o valor à carteira.
+function deleteSavedEntry(id,type){
+  const x=findTransaction(id); if(!x) return;
+  if(!confirm(`Excluir "${x.desc||x.cat}" de ${money(x.amount)}?`)) return;
+  undoWalletEffect(x);
+  state.transactions=state.transactions.filter(t2=>t2.id!==id);
+  saveState(); renderSavedEntries(type); updateFormTotal(type);
+  showToast('Excluído 🗑');
 }
 /* editar = devolve o valor à carteira, remove o salvo e recoloca no bloco pra ajustar */
-function editSaved(id,type){
-  const x=findTx(id); if(!x) return;
-  refundTx(x);
-  S.transactions=S.transactions.filter(t2=>t2.id!==id);
-  persist();
+// Traz um lançamento salvo de volta para o formulário.
+function editSavedEntry(id,type){
+  const x=findTransaction(id); if(!x) return;
+  undoWalletEffect(x);
+  state.transactions=state.transactions.filter(t2=>t2.id!==id);
+  saveState();
   // recoloca no bloco de edição
   const blk=document.getElementById('entryBlock'); if(blk){
     const catSel=blk.querySelector('[data-role=cat]');
     if(type==='despesa'){
-      const known=Object.keys(CAT_DESPESA).includes(x.cat);
+      const known=Object.keys(EXPENSE_CATEGORIES).includes(x.cat);
       const cat = known ? x.cat : 'Outros';
-      catSel.value=cat; onRowCat(catSel,type);
-      if(SPECIAL_DESPESA.includes(cat) && x.src){ const s=blk.querySelector('[data-role=src]'); if(s){ s.value=x.src; onSrcChange(s);} }
+      catSel.value=cat; onCategoryChange(catSel,type);
+      if(EXPENSES_WITH_SOURCE.includes(cat) && x.src){ const s=blk.querySelector('[data-role=src]'); if(s){ s.value=x.src; onSourceChange(s);} }
       else if(cat==='Outros'){ const c=blk.querySelector('[data-role=custom]'); if(c) c.value=x.cat; }
     } else {
-      catSel.value=Object.keys(CAT_RECEITA).includes(x.cat)?x.cat:'Salário';
+      catSel.value=Object.keys(INCOME_CATEGORIES).includes(x.cat)?x.cat:'Salário';
     }
     const valEl=blk.querySelector('[data-role=val]');
     if(valEl){ valEl.value=x.amount.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}); }
   }
-  renderSaved(type); recalcTotal(type);
-  toast('Ajuste e toque em Salvar novamente ✏️');
+  renderSavedEntries(type); updateFormTotal(type);
+  showToast('Ajuste e toque em Salvar novamente ✏️');
   const blk2=document.getElementById('entryBlock'); if(blk2&&blk2.scrollIntoView){ try{blk2.scrollIntoView({behavior:'smooth',block:'center'});}catch(e){} }
 }
 
 /* ---------- Formulário simples (Transferência / Investimento) ---------- */
-function singleForm(type,cfg){
+// Formulário de um lançamento só (transferência).
+function singleEntryFormHtml(type,cfg){
   const today=new Date().toISOString().slice(0,10);
   const isInvest=type==='investimento';
   return `<div class="form-screen">
@@ -1831,7 +2031,7 @@ function singleForm(type,cfg){
       <button class="hdr-icn" onclick="closeForm()">✕</button></div>
     <div class="form-body">
       <div class="amount-display ${cfg.theme}">
-        <span class="cur">R$</span><input id="fAmount" inputmode="decimal" placeholder="0,00" oninput="maskMoney(this)">
+        <span class="cur">R$</span><input id="fAmount" inputmode="decimal" placeholder="0,00" oninput="formatMoneyInput(this)">
       </div>
       <div class="field"><label>Descrição</label>
         <div class="inp"><input id="fDesc" placeholder="${isInvest?'Ex: Aporte Tesouro, CDB...':'Ex: Reserva do mês'}"></div></div>
@@ -1843,36 +2043,38 @@ function singleForm(type,cfg){
         <div class="inp"><select id="fWalletTo">${walletOptions('poup')}</select></div></div>`:''}
       <div class="field"><label>Observação (opcional)</label>
         <div class="inp"><textarea id="fNote" placeholder="Adicione uma observação..."></textarea></div></div>
-      <button class="save-btn ${cfg.theme}" onclick="saveSingle('${type}')">${isInvest?'Salvar Investimento':'Transferir'}</button>
+      <button class="save-btn ${cfg.theme}" onclick="saveSingleEntry('${type}')">${isInvest?'Salvar Investimento':'Transferir'}</button>
     </div></div>`;
 }
-function saveSingle(type){
-  const amount=parseBR(document.getElementById('fAmount').value);
-  if(!(amount>0)){ toast('Informe um valor válido'); return; }
+// Salva uma transferência entre carteiras.
+function saveSingleEntry(type){
+  const amount=parseAmount(document.getElementById('fAmount').value);
+  if(!(amount>0)){ showToast('Informe um valor válido'); return; }
   const desc=(document.getElementById('fDesc').value||'').trim();
   const date=(document.getElementById('fDate').value)||new Date().toISOString().slice(0,10);
   const wallet=document.getElementById('fWallet').value;
-  const w=walletById(wallet);
+  const w=findWallet(wallet);
   const noteEl=document.getElementById('fNote'); const note=noteEl&&noteEl.value.trim()?noteEl.value.trim():null;
-  const tx={id:t(),type,amount,date,wallet};
+  const tx={id:newId(),type,amount,date,wallet};
   if(note) tx.note=note;
   if(type==='transferencia'){
     const to=document.getElementById('fWalletTo').value;
-    if(to===wallet){ toast('Escolha carteiras diferentes'); return; }
+    if(to===wallet){ showToast('Escolha carteiras diferentes'); return; }
     if(w.balance<amount && !confirm(`Saldo insuficiente em ${w.name}. Transferir mesmo assim?`)) return;
-    const tw=walletById(to); w.balance-=amount; tw.balance+=amount;
+    const tw=findWallet(to); w.balance-=amount; tw.balance+=amount;
     tx.toWallet=to; tx.desc=desc||`${w.name} → ${tw.name}`;
   } else {
     if(w.balance<amount && !confirm(`Saldo insuficiente em ${w.name}. Investir mesmo assim?`)) return;
-    w.balance-=amount; const iw=walletById('inv'); if(iw && wallet!=='inv') iw.balance+=amount;
+    w.balance-=amount; const iw=findWallet('inv'); if(iw && wallet!=='inv') iw.balance+=amount;
     tx.toWallet='inv'; tx.cat='Investimentos'; tx.desc=desc||'Aporte';
   }
-  S.transactions.push(tx); persist(); closeForm(); renderAll();
-  toast(type==='transferencia'?'Transferência feita 🔄':'Investimento registrado 📈');
+  state.transactions.push(tx); saveState(); closeForm(); renderAll();
+  showToast(type==='transferencia'?'Transferência feita 🔄':'Investimento registrado 📈');
 }
 
 /* ---------- Form de meta ---------- */
-function metaForm(cfg){
+// Formulário de nova meta.
+function goalForm(cfg){
   const emojis=['🎯','🏠','🚗','✈️','💍','📱','💻','🛡️','🎓','💰'];
   return `<div class="form-screen">
     <div class="hdr-simple ${cfg.theme}">
@@ -1881,47 +2083,59 @@ function metaForm(cfg){
     <div class="form-body">
       <div style="text-align:center;margin:6px 0 18px">
         <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap" id="emojiPick">
-          ${emojis.map((e,i)=>`<button type="button" class="hdr-icn" style="background:${i===0?'var(--gold)':'var(--surface-2)'};color:var(--text);font-size:22px" onclick="pickEmoji(this,'${e}')">${e}</button>`).join('')}
+          ${emojis.map((e,i)=>`<button type="button" class="hdr-icn" style="background:${i===0?'var(--gold)':'var(--surface-2)'};color:var(--text);font-size:22px" onclick="selectEmoji(this,'${e}')">${e}</button>`).join('')}
         </div>
       </div>
       <div class="field"><label>Nome da meta</label>
         <div class="inp"><input id="mName" placeholder="Ex: Comprar um carro"></div></div>
       <div class="field"><label>Valor da meta</label>
-        <div class="inp"><span>R$</span><input id="mTarget" inputmode="decimal" placeholder="0,00" oninput="maskMoney(this)"></div></div>
+        <div class="inp"><span>R$</span><input id="mTarget" inputmode="decimal" placeholder="0,00" oninput="formatMoneyInput(this)"></div></div>
       <div class="field"><label>Já economizado (opcional)</label>
-        <div class="inp"><span>R$</span><input id="mSaved" inputmode="decimal" placeholder="0,00" oninput="maskMoney(this)"></div></div>
-      <button class="save-btn gold" onclick="saveMeta()">Criar Meta 🎯</button>
+        <div class="inp"><span>R$</span><input id="mSaved" inputmode="decimal" placeholder="0,00" oninput="formatMoneyInput(this)"></div></div>
+      <button class="save-btn gold" onclick="saveGoal()">Criar Meta 🎯</button>
     </div></div>`;
 }
-let pickedEmoji='🎯';
-function pickEmoji(btn,e){ pickedEmoji=e;
+let selectedEmoji='🎯';
+// Escolhe o emoji da meta.
+function selectEmoji(btn,e){ selectedEmoji=e;
   document.querySelectorAll('#emojiPick button').forEach(b=>b.style.background='var(--surface-2)');
   btn.style.background='var(--gold)'; }
-function saveMeta(){
+// Salva uma nova meta.
+function saveGoal(){
   const name=(document.getElementById('mName').value||'').trim();
-  const target=parseBR(document.getElementById('mTarget').value);
-  const saved=parseBR(document.getElementById('mSaved').value);
-  if(!name){ toast('Dê um nome à meta'); return; }
-  if(!(target>0)){ toast('Informe o valor da meta'); return; }
-  S.goals.push({id:t(),name,emoji:pickedEmoji,target,saved:saved||0});
-  pickedEmoji='🎯'; persist(); closeForm(); go('metas'); toast('Meta criada 🎯');
+  const target=parseAmount(document.getElementById('mTarget').value);
+  const saved=parseAmount(document.getElementById('mSaved').value);
+  if(!name){ showToast('Dê um nome à meta'); return; }
+  if(!(target>0)){ showToast('Informe o valor da meta'); return; }
+  state.goals.push({id:newId(),name,emoji:selectedEmoji,target,saved:saved||0});
+  selectedEmoji='🎯'; saveState(); closeForm(); showScreen('metas'); showToast('Meta criada 🎯');
 }
 
 /* ============================================================
    Utilitários de valor / cor
    ============================================================ */
-function parseBR(v){ if(v==null) return 0;
+// Converte o texto digitado em número.
+function parseAmount(v){ if(v==null) return 0;
   v=String(v).replace(/[^\d.,-]/g,'');
   if(v.includes(',')) v=v.replace(/\./g,'').replace(',','.');
   const n=parseFloat(v); return isNaN(n)?0:n; }
-function maskMoney(input){
+/* Formata o valor enquanto a pessoa digita.
+
+   Observação:
+   A formatação é feita a cada tecla, sempre da direita para a
+   esquerda (os dois últimos dígitos são os centavos). É o
+   comportamento dos aplicativos de banco e evita que a pessoa
+   precise se preocupar com vírgula e ponto. */
+function formatMoneyInput(input){
   let d=input.value.replace(/\D/g,''); if(!d){ input.value=''; return; }
   d=(parseInt(d,10)/100).toFixed(2);
   input.value=d.replace('.',',').replace(/\B(?=(\d{3})+(?!\d))/g,'.');
 }
-function hex2rgba(hex,a){ const h=hex.replace('#','');
+// Converte uma cor hexadecimal em rgba, para usar transparência.
+function hexToRgba(hex,a){ const h=hex.replace('#','');
   const r=parseInt(h.slice(0,2),16),g=parseInt(h.slice(2,4),16),b=parseInt(h.slice(4,6),16);
   return `rgba(${r},${g},${b},${a})`; }
+// Clareia ou escurece uma cor.
 function shade(hex,pct){ const h=hex.replace('#','');
   let r=parseInt(h.slice(0,2),16),g=parseInt(h.slice(2,4),16),b=parseInt(h.slice(4,6),16);
   r=Math.max(0,Math.min(255,r+pct)); g=Math.max(0,Math.min(255,g+pct)); b=Math.max(0,Math.min(255,b+pct));
@@ -1930,100 +2144,208 @@ function shade(hex,pct){ const h=hex.replace('#','');
 /* ============================================================
    Configurações / dados
    ============================================================ */
-function toggleTheme(){ S.settings.theme=S.settings.theme==='dark'?'light':'dark';
-  applyTheme(); persist(); renderMais(); }
-function applyTheme(){ document.documentElement.setAttribute('data-theme',S.settings.theme);
-  document.querySelector('meta[name=theme-color]').setAttribute('content',S.settings.theme==='dark'?'#0b1220':'#0f172a'); }
-function toggleHide(){ S.settings.hideValues=!S.settings.hideValues; persist(); renderAll(); }
-function editName(){ const n=prompt('Seu nome:',S.user.name);
-  if(n&&n.trim()){ S.user.name=n.trim(); persist(); renderMais(); renderInicio(); toast('Nome atualizado'); } }
+// Alterna entre o tema claro e o escuro.
+function toggleTheme(){ state.settings.theme=state.settings.theme==='dark'?'light':'dark';
+  applyTheme(); saveState(); renderSettings(); }
+// Aplica o tema salvo.
+function applyTheme(){ document.documentElement.setAttribute('data-theme',state.settings.theme);
+  document.querySelector('meta[name=theme-color]').setAttribute('content',state.settings.theme==='dark'?'#0b1220':'#0f172a'); }
+// Liga e desliga a ocultação dos valores na tela.
+function toggleHiddenValues(){ state.settings.hideValues=!state.settings.hideValues; saveState(); renderAll(); }
+// Pergunta e salva o nome de quem usa o app.
+function editName(){ const n=prompt('Seu nome:',state.user.name);
+  if(n&&n.trim()){ state.user.name=n.trim(); saveState(); renderSettings(); renderHome(); showToast('Nome atualizado'); } }
+// Cria uma carteira nova.
 function addWallet(){
   const name=prompt('Nome da nova carteira:'); if(!name||!name.trim()) return;
   const emoji=prompt('Emoji (ex: 💼):','💼')||'💼';
-  const bal=parseBR(prompt('Saldo inicial:','0'));
+  const bal=parseAmount(prompt('Saldo inicial:','0'));
   const colors=['#16a34a','#2563eb','#f97316','#ec4899','#8b5cf6','#0ea5e9','#eab308','#ef4444'];
-  S.wallets.push({id:t(),name:name.trim(),emoji:emoji.trim(),color:colors[S.wallets.length%colors.length],balance:bal,type:'Personalizada'});
-  persist(); renderCarteiras(); toast('Carteira criada 👛');
+  state.wallets.push({id:newId(),name:name.trim(),emoji:emoji.trim(),color:colors[state.wallets.length%colors.length],balance:bal,type:'Personalizada'});
+  saveState(); renderWallets(); showToast('Carteira criada 👛');
 }
+// Baixa um arquivo com todos os dados, para backup.
 function exportData(){
-  const blob=new Blob([JSON.stringify(S,null,2)],{type:'application/json'});
+  const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});
   const url=URL.createObjectURL(blob); const a=document.createElement('a');
   a.href=url; a.download='controle-financeiro-backup.json'; a.click(); URL.revokeObjectURL(url);
-  toast('Backup exportado 📤');
+  showToast('Backup exportado 📤');
 }
+// Restaura os dados a partir de um arquivo de backup.
 function importData(ev){ const f=ev.target.files[0]; if(!f) return;
   const rd=new FileReader(); rd.onload=()=>{ try{ const d=JSON.parse(rd.result);
-    if(d.wallets&&d.transactions){ S=d; if(!S.settings)S.settings={theme:'light',hideValues:false};
-      applyTheme(); persist(); renderAll(); toast('Backup importado ✅'); }
-    else toast('Arquivo inválido'); }catch(e){ toast('Não foi possível ler o arquivo'); } };
+    if(d.wallets&&d.transactions){ state=d; if(!state.settings)state.settings={theme:'light',hideValues:false};
+      applyTheme(); saveState(); renderAll(); showToast('Backup importado ✅'); }
+    else showToast('Arquivo inválido'); }catch(e){ showToast('Não foi possível ler o arquivo'); } };
   rd.readAsText(f); ev.target.value='';
 }
+// Apaga tudo e volta o app ao estado inicial.
 function resetData(){ if(!confirm('Isso apaga TODOS os seus dados e volta ao exemplo. Continuar?')) return;
-  S=defaultData(); applyTheme(); persist(); renderAll(); go('inicio'); toast('App reiniciado'); }
+  state=createInitialData(); applyTheme(); saveState(); renderAll(); showScreen('inicio'); showToast('App reiniciado'); }
 
-/* ============================================================
-   Navegação
-   ============================================================ */
-const SCREEN_MAP={inicio:renderInicio,transacoes:renderTransacoes,carteiras:renderCarteiras,
-  estatisticas:renderEstatisticas,metas:renderMetas,investir:renderInvestir,mais:renderMais,
-  'carteira-det':renderCarteiraDet,historico:renderHistorico,lista:renderLista,
-  meses:renderMeses,mesdet:renderMesdet,comparar:renderComparar};
-let navStack=[], curScr='inicio';
-function go(scr,isBack){
-  if(!isBack && curScr && curScr!==scr) navStack.push(curScr);
-  curScr=scr;
+/* ---------------------------------------------------------------
+   8. NAVEGAÇÃO
+   --------------------------------------------------------------- */
+const SCREEN_RENDERERS={inicio:renderHome,transacoes:renderTransactions,carteiras:renderWallets,
+  estatisticas:renderReports,metas:renderGoals,investir:renderSimulator,mais:renderSettings,
+  'carteira-det':renderWalletDetail,historico:renderHistory,lista:renderFilteredList,
+  meses:renderMonthList,mesdet:renderMonthDetail,comparar:renderComparison};
+let screenHistory=[], currentScreen='inicio';
+// Troca a tela visível.
+function showScreen(scr,isBack){
+  if(!isBack && currentScreen && currentScreen!==scr){
+    screenHistory.push(currentScreen);
+    pushHistoryEntry();
+  }
+  currentScreen=scr;
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.getElementById('scr-'+scr).classList.add('active');
   renderHeader(scr);
-  (SCREEN_MAP[scr]||(()=>{}))();
+  (SCREEN_RENDERERS[scr]||(()=>{}))();
   const bottom=['inicio','transacoes','estatisticas','mais'];
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.toggle('on', b.dataset.nav===scr));
   if(!bottom.includes(scr)) document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('on'));
   document.getElementById('main').scrollTop=0;
 }
-function goBack(){ const prev=navStack.pop()||'inicio'; go(prev,true); }
-function renderAll(){
-  (SCREEN_MAP[curScr]||renderInicio)();
+/* Volta para a tela anterior.
+
+   Observação:
+   O botão "Voltar" do app não navega direto: ele devolve uma entrada
+   ao histórico do navegador e deixa o popstate fazer o trabalho.
+   Parece um rodeio, mas é o que mantém o histórico do aparelho e a
+   pilha de telas do app sempre com o mesmo tamanho. Se cada um
+   andasse por conta própria, o botão do celular passaria a fechar o
+   app no meio da navegação. */
+function goBack(){
+  if(historyDepth>0){ history.back(); return; }
+  applyGoBack();
 }
 
-/* ---------- FAB ---------- */
-function openFab(){ document.getElementById('overlay').classList.add('show');
-  document.getElementById('fabMenu').classList.add('show'); }
-function closeFab(){ document.getElementById('overlay').classList.remove('show');
-  document.getElementById('fabMenu').classList.remove('show'); }
+// Executa a volta de fato (chamada pelo popstate).
+function applyGoBack(){ const prev=screenHistory.pop()||'inicio'; showScreen(prev,true); }
+// Redesenha a tela atual, depois de mexer nos dados.
+function renderAll(){
+  (SCREEN_RENDERERS[currentScreen]||renderHome)();
+}
+
+/* Menu do botão + (canto inferior). */
+let fabHistoryEntry=false;
+
+// Abre o menu do botão +.
+function openFab(){
+  document.getElementById('overlay').classList.add('show');
+  document.getElementById('fabMenu').classList.add('show');
+  pushHistoryEntry(); fabHistoryEntry=true;
+}
+
+// Só esconde o menu, sem mexer no histórico.
+function hideFab(){
+  document.getElementById('overlay').classList.remove('show');
+  document.getElementById('fabMenu').classList.remove('show');
+}
+
+// Fecha o menu a pedido de quem usa (toque fora do menu).
+function closeFab(){
+  hideFab();
+  if(fabHistoryEntry){ fabHistoryEntry=false; if(historyDepth>0) history.back(); }
+}
 
 /* ============================================================
-   Bootstrap
+   Botão voltar do aparelho
+
+   Observação:
+   O Android já manda o WebView andar para trás no histórico quando o
+   botão voltar é pressionado. Então, em vez de depender de plugin
+   nativo, a cada avanço de tela eu empilho uma entrada com
+   history.pushState e escuto o popstate. O resultado é que o botão do
+   aparelho passa a voltar tela por tela dentro do app, e só fecha o
+   app quando não há mais para onde voltar — que é o comportamento que
+   a pessoa espera. A contagem em historyDepth existe para eu saber
+   quantas entradas são minhas e nunca mandar o app voltar além do
+   ponto em que ele abriu.
    ============================================================ */
-function init(){
+let historyDepth=0;
+
+// Empilha uma entrada de histórico para o botão voltar consumir.
+function pushHistoryEntry(){
+  historyDepth++;
+  try{ history.pushState({app:true,depth:historyDepth},''); }catch(e){ historyDepth--; }
+}
+
+window.addEventListener('popstate',function(){
+  if(historyDepth>0) historyDepth--;
+
+  // menu do botão + aberto: o voltar apenas fecha o menu
+  const fabMenu=document.getElementById('fabMenu');
+  if(fabMenu && fabMenu.classList.contains('show')){ hideFab(); fabHistoryEntry=false; return; }
+  // formulário aberto: o voltar fecha o formulário
+  if(document.querySelector('.form-screen')){ applyCloseForm(); return; }
+  // caso normal: volta uma tela
+  applyGoBack();
+});
+
+/* ---------------------------------------------------------------
+   9. INICIALIZAÇÃO
+   --------------------------------------------------------------- */
+// Liga tudo quando o app abre.
+function startApp(){
   applyTheme();
   // nav
-  document.querySelectorAll('.nav-btn').forEach(b=>b.onclick=()=>go(b.dataset.nav));
+  document.querySelectorAll('.nav-btn').forEach(b=>b.onclick=()=>showScreen(b.dataset.nav));
   document.getElementById('fab').onclick=openFab;
   document.getElementById('overlay').onclick=closeFab;
   document.querySelectorAll('.fm-item').forEach(b=>b.onclick=()=>openForm(b.dataset.form));
   // extra nav targets (metas/investir/carteiras) via header buttons already wired inline
-  go('inicio');
+  showScreen('inicio');
   // Deep links from "Mais" screen to metas/investir
 }
-// expose extra nav buttons for screens not in bottom bar
-window.go=go; window.goBack=goBack; window.openForm=openForm; window.openWallet=openWallet;
-window.openLista=openLista; window.editSaved=editSaved; window.deleteSaved=deleteSaved;
-window.openMes=openMes; window.openComparar=openComparar;
-window.toggleHide=toggleHide; window.toggleTheme=toggleTheme;
-window.setTxFilter=setTxFilter; window.delTx=delTx; window.delGoal=delGoal;
-window.addToGoal=addToGoal; window.addWallet=addWallet; window.editName=editName;
-window.exportData=exportData; window.importData=importData; window.resetData=resetData;
-window.saveMulti=saveMulti; window.saveSingle=saveSingle; window.insertItem=insertItem;
-window.removeItem=removeItem; window.editItemVal=editItemVal;
-window.onRowCat=onRowCat; window.onSrcChange=onSrcChange; window.recalcTotal=recalcTotal;
-window.scrollWallets=scrollWallets; window.saveMeta=saveMeta; window.closeForm=closeForm;
-window.maskMoney=maskMoney;
-window.setSimMode=setSimMode; window.toggleModeMenu=toggleModeMenu;
-window.recalcInvest=recalcInvest; window.recalcCrypto=recalcCrypto; window.pickCrypto=pickCrypto; window.setPrazo=setPrazo;
-window.pickEmoji=pickEmoji;
+/* Funcoes chamadas a partir do HTML gerado (onclick, oninput, etc.).
+   Observacao:
+   O HTML e montado como texto e inserido com innerHTML, entao os
+   handlers inline sao resolvidos no escopo global. Por isso tudo o
+   que e chamado a partir do HTML precisa estar exposto em window. */
+window.showScreen = showScreen;
+window.goBack = goBack;
+window.openForm = openForm;
+window.closeForm = closeForm;
+window.openWallet = openWallet;
+window.openFilteredList = openFilteredList;
+window.openMonth = openMonth;
+window.openComparison = openComparison;
+window.setTransactionFilter = setTransactionFilter;
+window.deleteTransaction = deleteTransaction;
+window.scrollWallets = scrollWallets;
+window.toggleHiddenValues = toggleHiddenValues;
+window.toggleTheme = toggleTheme;
+window.editName = editName;
+window.addWallet = addWallet;
+window.exportData = exportData;
+window.importData = importData;
+window.resetData = resetData;
+window.addToGoal = addToGoal;
+window.deleteGoal = deleteGoal;
+window.selectEmoji = selectEmoji;
+window.saveGoal = saveGoal;
+window.addPendingItem = addPendingItem;
+window.removePendingItem = removePendingItem;
+window.updatePendingValue = updatePendingValue;
+window.updateFormTotal = updateFormTotal;
+window.onCategoryChange = onCategoryChange;
+window.onSourceChange = onSourceChange;
+window.savePendingEntries = savePendingEntries;
+window.saveSingleEntry = saveSingleEntry;
+window.editSavedEntry = editSavedEntry;
+window.deleteSavedEntry = deleteSavedEntry;
+window.formatMoneyInput = formatMoneyInput;
+window.setSimulatorMode = setSimulatorMode;
+window.toggleSimulatorMenu = toggleSimulatorMenu;
+window.updateInvestmentResults = updateInvestmentResults;
+window.updateCryptoResults = updateCryptoResults;
+window.selectCoin = selectCoin;
+window.setTermInYears = setTermInYears;
 
-if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',init);}else{init();}
+
+if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',startApp);}else{startApp();}
 </script>
 </body>
 </html>

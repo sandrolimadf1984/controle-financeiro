@@ -6,99 +6,132 @@
 
 **Organize seu salário, seus vales e seus gastos — simples, sem anúncios e sem cadastro.**
 
-*Aplicativo de finanças pessoais feito para o dia a dia do brasileiro.*
-
 </div>
 
 ---
 
-## 📖 Sobre
+## Por que eu fiz este app
 
-O **Controle Financeiro** nasceu de uma necessidade real: acompanhar para onde vai o dinheiro do mês sem depender de planilhas complicadas nem de aplicativos cheios de propaganda, assinatura e cadastro.
+Eu queria acompanhar para onde ia o dinheiro do mês sem depender de planilha e sem
+aplicativo cheio de propaganda, assinatura e cadastro. Testei vários e sempre
+esbarrava no mesmo problema: nenhum deles entendia como funciona o salário aqui.
 
-A proposta é direta — **abriu, lançou, entendeu**. Em poucos toques você registra o que entrou, o que saiu, e vê na hora quanto ainda tem disponível.
+Vale-alimentação e vale-transporte não são o mesmo dinheiro do salário. São valores
+carimbados, que só servem para uma coisa. Quando o app soma tudo num saldo só, o
+número que aparece é maior do que o que realmente dá para gastar — e aí a conta
+não fecha no fim do mês.
 
-E, diferente da maioria dos apps de finanças, ele entende como o salário brasileiro realmente funciona: **salário, extras, vale-alimentação e vale-transporte são coisas separadas** — e o app trata cada um do jeito certo.
-
----
-
-## ✨ O que o app faz
-
-### 💸 Entradas e despesas
-Registre salário, rendas extras e despesas em segundos. Cada despesa pode receber uma observação, e categorias como *Mercado*, *Transporte* e *Combustível* permitem escolher de qual carteira o valor foi descontado.
-
-### 👛 Carteiras separadas
-Conta bancária, vale-alimentação e vale-transporte têm saldos independentes. Os benefícios não se misturam com o saldo do salário — porque, na vida real, eles não se misturam mesmo.
-
-### 📊 Relatórios que fazem sentido
-- Resumo do mês com entradas, despesas e saldo
-- Gráfico de despesas por categoria, mostrando **quanto por cento do que entrou já foi gasto**
-- Histórico geral e histórico mês a mês
-- Comparação entre meses e entre anos
-
-### 📈 Simulador de investimentos
-Compare **Poupança**, **Tesouro Selic**, **CDB** e **LCI/LCA** lado a lado, com o **Imposto de Renda já descontado** pela tabela regressiva. Veja quanto o mesmo dinheiro renderia em 1, 5, 10, 20 ou 30 anos e qual opção sai na frente.
-
-### 🪙 Simulador de criptomoedas
-Escolha entre Bitcoin, Ethereum e Solana, informe o preço atual e descubra quanto o seu investimento valeria em diferentes cenários — de uma queda de 50% até uma alta de 100x.
-
-### 🎯 Metas e organização
-Defina objetivos financeiros e acompanhe o progresso ao longo do tempo.
-
-### 🌗 Tema claro e escuro
-Interface pensada para celular, com modo escuro para usar à noite sem cansar a vista. Tem também um botão para **ocultar os valores** na tela, útil quando tem gente por perto.
+Então fiz do meu jeito: cada coisa no seu lugar, e a resposta que interessa logo na
+primeira tela — **quanto do que eu recebi ainda está comigo**.
 
 ---
 
-## 🔒 Privacidade
+## O que ele faz
 
-Este é um ponto inegociável do projeto:
+**Entradas e despesas**
+Registro de salário, rendas extras e gastos em poucos toques. Dá para lançar vários
+itens seguidos sem sair da tela, e cada lançamento aceita uma observação.
 
-- **Nenhum dado é coletado.** Não existe servidor guardando as suas informações.
-- **Nada é vendido nem compartilhado.** Com ninguém.
-- **Sem cadastro e sem login.** Você abre e usa.
-- **Sem anúncios e sem rastreadores.**
-- Tudo o que você registra fica **somente no seu aparelho**.
+**Carteiras separadas**
+Conta bancária, vale-alimentação e vale-transporte com saldos independentes. Ao
+lançar mercado, transporte ou combustível, dá para escolher de qual carteira saiu o
+dinheiro.
 
-📄 [Leia a Política de Privacidade completa](https://sandrolimadf1984.github.io/controle-financeiro/politica-de-privacidade.html)
+**Relatórios que respondem alguma coisa**
+Gráfico de despesas por categoria mostrando quanto por cento do que entrou já foi
+gasto, resumo do mês, histórico completo e comparação entre meses e entre anos.
+
+**Simulador de renda fixa**
+Compara Poupança, Tesouro Selic, CDB e LCI/LCA lado a lado, com o imposto de renda
+já descontado pela tabela regressiva, em prazos de 1 a 30 anos.
+
+**Simulador de criptomoedas**
+Bitcoin, Ethereum e Solana: informando o preço atual, mostra quanto o investimento
+valeria em diferentes cenários, de uma queda pela metade até uma alta de 100x.
+
+**Metas**
+Objetivos financeiros com acompanhamento do progresso.
+
+**Detalhes do dia a dia**
+Tema claro e escuro, e um botão para ocultar os valores na tela quando tem gente por
+perto.
 
 ---
 
-## ⚙️ Tecnologia
+## Privacidade
 
-| | |
+Este ponto para mim não é negociável:
+
+- Nenhum dado é coletado. Não existe servidor guardando as suas informações.
+- Nada é vendido nem compartilhado. Com ninguém.
+- Sem cadastro, sem login, sem rastreador e sem anúncio.
+- Tudo o que você registra fica salvo no seu próprio aparelho.
+
+[Política de Privacidade completa](https://sandrolimadf1984.github.io/controle-financeiro/politica-de-privacidade.html)
+
+---
+
+## Como foi construído
+
+HTML, CSS e JavaScript puro, em arquivo único, sem framework e sem biblioteca
+externa. Empacotado para Android com Capacitor.
+
+Duas decisões que valem explicar:
+
+**Sem biblioteca de gráficos.** Testei algumas, e todas pesavam mais que o app
+inteiro e precisavam de internet para carregar. Como os gráficos aqui são simples,
+montei em SVG na mão. Ficou mais leve e o app continua funcionando offline.
+
+**Dados só no aparelho.** Não usei nuvem nem banco de dados. Além de resolver a
+questão da privacidade de forma definitiva, elimina servidor, custo e uma porção de
+coisas que poderiam falhar.
+
+### Organização do código
+
+O arquivo é único, mas dividido em blocos:
+
+| Bloco | O que tem |
 |---|---|
-| **Interface** | HTML, CSS e JavaScript puro — sem frameworks |
-| **Estrutura** | Arquivo único e autocontido, sem dependências externas |
-| **Gráficos** | SVG gerado na hora, sem bibliotecas de terceiros |
-| **Armazenamento** | Local, no próprio dispositivo |
-| **Android** | Empacotado com Capacitor |
-| **Funciona offline** | Sim |
+| 1. Configuração | categorias, carteiras e as regras que ligam uma à outra |
+| 2. Estado | dados em memória e gravação no aparelho |
+| 3. Formatação | dinheiro, datas, números e cores |
+| 4. Cálculos | resumos do mês, saldos e agrupamentos |
+| 5. Telas | cada tela monta o próprio HTML |
+| 6. Formulários | lançamento de entradas, despesas e metas |
+| 7. Ajustes | tema, backup e preferências |
+| 8. Navegação | troca de telas e botão voltar do aparelho |
+| 9. Inicialização | ponto de entrada |
 
-O app foi construído com foco em ser **leve e rápido**: sem bibliotecas pesadas, sem carregamento infinito e sem depender de conexão para funcionar.
+Nomes de código em inglês, comentários em português. Onde a solução não é óbvia,
+deixei uma observação explicando o motivo da escolha — para quando eu voltar nesse
+arquivo daqui a seis meses e não lembrar por que fiz daquele jeito.
 
 ---
 
-## 📱 Plataformas
+## Plataformas
 
 - **Android** — aplicativo instalável
 - **Navegador** — funciona em qualquer computador ou celular
 
 ---
 
-## 👨‍💻 Autor
+## Autor
 
 Desenvolvido por **Sandro** — [@sandrolimadf1984](https://github.com/sandrolimadf1984)
 
-Desenvolvedor autodidata de Brasília, com experiência em desenvolvimento Full Stack, análise de sistemas e automação de processos.
+Desenvolvedor autodidata de Brasília, com experiência em desenvolvimento Full Stack,
+análise de sistemas e automação de processos.
 
-📧 Contato: aquilesdodf@gmail.com
+Contato: aquilesdodf@gmail.com
 
 ---
 
-## ⚠️ Aviso
+## Aviso
 
-Os simuladores de investimento e de criptomoedas têm **finalidade educativa**. Os resultados são projeções baseadas nos valores informados pelo usuário e nas regras vigentes de tributação — não constituem recomendação de investimento. Rentabilidade passada não garante rentabilidade futura, e criptomoedas são ativos de altíssimo risco.
+Os simuladores têm finalidade educativa. Os resultados são projeções baseadas nos
+valores informados e nas regras de tributação vigentes — não são recomendação de
+investimento. Rentabilidade passada não garante rentabilidade futura, e
+criptomoedas são ativos de altíssimo risco.
 
 ---
 
