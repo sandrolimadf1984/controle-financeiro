@@ -1745,7 +1745,7 @@ function openForm(type){
 }
 // Fecha o formulário e redesenha a tela que estava atrás.
 function closeForm(){
-  if(historyDepth>0 && document.querySelector('.form-screen')){ history.back(); return; }
+  if(!nativeBackButton && historyDepth>0 && document.querySelector('.form-screen')){ history.back(); return; }
   applyCloseForm();
 }
 
@@ -2217,7 +2217,7 @@ function showScreen(scr,isBack){
    andasse por conta própria, o botão do celular passaria a fechar o
    app no meio da navegação. */
 function goBack(){
-  if(historyDepth>0){ history.back(); return; }
+  if(!nativeBackButton && historyDepth>0){ history.back(); return; }
   applyGoBack();
 }
 
@@ -2247,40 +2247,84 @@ function hideFab(){
 // Fecha o menu a pedido de quem usa (toque fora do menu).
 function closeFab(){
   hideFab();
-  if(fabHistoryEntry){ fabHistoryEntry=false; if(historyDepth>0) history.back(); }
+  if(fabHistoryEntry){ fabHistoryEntry=false; if(!nativeBackButton && historyDepth>0) history.back(); }
 }
 
 /* ============================================================
    Botão voltar do aparelho
 
    Observação:
-   O Android já manda o WebView andar para trás no histórico quando o
-   botão voltar é pressionado. Então, em vez de depender de plugin
-   nativo, a cada avanço de tela eu empilho uma entrada com
-   history.pushState e escuto o popstate. O resultado é que o botão do
-   aparelho passa a voltar tela por tela dentro do app, e só fecha o
-   app quando não há mais para onde voltar — que é o comportamento que
-   a pessoa espera. A contagem em historyDepth existe para eu saber
-   quantas entradas são minhas e nunca mandar o app voltar além do
-   ponto em que ele abriu.
+   Esta parte deu bastante trabalho até funcionar. A primeira tentativa
+   foi só com o histórico do navegador (pushState + popstate), sem nada
+   nativo — no computador funcionava, mas no aparelho o Android fechava
+   o app assim mesmo. O WebView do Capacitor não repassa o botão voltar
+   para o histórico da página.
+
+   O que resolve é escutar o evento nativo do próprio Capacitor. Como
+   ele desliga o comportamento padrão, passa a ser responsabilidade
+   daqui decidir tudo: fechar o menu, fechar o formulário, voltar uma
+   tela ou, aí sim, encerrar o app.
+
+   Mantive o caminho do histórico como reserva para quando o app roda
+   no navegador do computador, onde não existe plugin nativo. Os dois
+   caminhos chamam as mesmas funções, então o comportamento é o mesmo
+   nos dois lugares.
    ============================================================ */
+let nativeBackButton=false;   // true quando o plugin nativo assume o controle
 let historyDepth=0;
 
-// Empilha uma entrada de histórico para o botão voltar consumir.
+// Empilha uma entrada de histórico (só no navegador; no app é o plugin que cuida).
 function pushHistoryEntry(){
+  if(nativeBackButton) return;
   historyDepth++;
   try{ history.pushState({app:true,depth:historyDepth},''); }catch(e){ historyDepth--; }
 }
 
-window.addEventListener('popstate',function(){
-  if(historyDepth>0) historyDepth--;
-
-  // menu do botão + aberto: o voltar apenas fecha o menu
+/* Fecha o que estiver por cima da tela (menu ou formulário).
+   Devolve true quando fechou alguma coisa — assim quem chamou sabe
+   que o toque no voltar já foi usado e não deve trocar de tela. */
+function closeTopLayer(){
   const fabMenu=document.getElementById('fabMenu');
-  if(fabMenu && fabMenu.classList.contains('show')){ hideFab(); fabHistoryEntry=false; return; }
-  // formulário aberto: o voltar fecha o formulário
-  if(document.querySelector('.form-screen')){ applyCloseForm(); return; }
-  // caso normal: volta uma tela
+  if(fabMenu && fabMenu.classList.contains('show')){ hideFab(); fabHistoryEntry=false; return true; }
+  if(document.querySelector('.form-screen')){ applyCloseForm(); return true; }
+  return false;
+}
+
+// Decide o que fazer quando o botão voltar do aparelho é pressionado.
+function handleBackButton(){
+  if(closeTopLayer()) return;
+  if(screenHistory.length){ applyGoBack(); return; }
+  exitApp();   // já está no Início e não há mais para onde voltar
+}
+
+// Encerra o app (só existe no aparelho; no navegador não faz nada).
+function exitApp(){
+  const plugin=window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+  if(plugin && plugin.exitApp) plugin.exitApp();
+}
+
+/* Liga o botão voltar.
+
+   Observação:
+   O plugin pode demorar alguns instantes para ficar disponível depois
+   que a tela carrega, então tento algumas vezes antes de desistir e
+   cair para o histórico do navegador. Sem isso, em aparelhos mais
+   lentos o registro falhava justamente na primeira abertura. */
+function setupBackButton(tentativa){
+  const plugin=window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+  if(plugin && plugin.addListener){
+    nativeBackButton=true;
+    plugin.addListener('backButton', handleBackButton);
+    return;
+  }
+  if((tentativa||0) < 10){ setTimeout(function(){ setupBackButton((tentativa||0)+1); }, 200); }
+}
+
+// Caminho reserva: botão voltar do navegador, no computador.
+window.addEventListener('popstate',function(){
+  if(nativeBackButton) return;
+  if(historyDepth>0) historyDepth--;
+  if(closeTopLayer()) return;
   applyGoBack();
 });
 
@@ -2289,6 +2333,7 @@ window.addEventListener('popstate',function(){
    --------------------------------------------------------------- */
 // Liga tudo quando o app abre.
 function startApp(){
+  setupBackButton();
   applyTheme();
   // nav
   document.querySelectorAll('.nav-btn').forEach(b=>b.onclick=()=>showScreen(b.dataset.nav));
