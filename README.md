@@ -135,6 +135,8 @@ criptomoedas são ativos de altíssimo risco.
 
 ---
 
+## Em desenvolvimento desde 2025. Versão atual finalizada em julho de 2026.
+
 <div align="center">
 
 **© 2026 Sandro — Todos os direitos reservados.**
