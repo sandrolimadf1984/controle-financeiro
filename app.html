@@ -93,6 +93,50 @@
   .hero .lbl{font-size:12.5px;color:#94a3b8;display:flex;align-items:center;gap:6px}
   .hero .val{font-size:34px;font-weight:800;margin:6px 0 2px;letter-spacing:-.02em}
   .hero .sub{font-size:12.5px;color:#cbd5e1}
+  /* Poupança dentro do cartão de saldo */
+  .hero .pig{position:relative;z-index:3;margin-top:2px}
+  .hero .pig-k{font-size:12.5px;font-weight:700;color:#22c55e}
+  .hero .pig-line{display:flex;align-items:center;gap:9px;margin-top:1px}
+  .hero .pig-v{font-size:17px;font-weight:800;color:#22c55e;letter-spacing:-.01em}
+  .hero .pig-btn{width:25px;height:25px;border-radius:50%;font-size:15px;font-weight:800;line-height:1;
+    color:#22c55e;background:rgba(34,197,94,.16);border:1px solid rgba(34,197,94,.5);
+    display:grid;place-items:center;flex-shrink:0}
+  .hero .pig-btn:active{background:rgba(34,197,94,.34);transform:scale(.92)}
+
+  /* Janelinha da poupança */
+  .mw-back{position:fixed;inset:0;background:rgba(2,6,23,.6);z-index:90;opacity:0;pointer-events:none;
+    transition:opacity .25s}
+  .mw-back.show{opacity:1;pointer-events:auto}
+  .mw{position:fixed;z-index:91;left:50%;top:50%;width:min(92vw,370px);max-height:85vh;overflow-y:auto;
+    transform:translate(-50%,-48%) scale(.96);background:var(--surface);border-radius:20px;padding:18px;
+    box-shadow:var(--shadow-lg);opacity:0;pointer-events:none;transition:opacity .25s,transform .25s}
+  .mw.show{opacity:1;pointer-events:auto;transform:translate(-50%,-50%) scale(1)}
+  .mw-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:13px}
+  .mw-head h3{margin:0;font-size:16.5px;font-weight:800}
+  .mw-x{width:30px;height:30px;border-radius:50%;background:var(--surface-3);color:var(--muted);font-size:14px}
+  .mw-x:active{background:var(--border)}
+  .mw-bal{background:var(--surface-2);border:1px solid var(--border);border-radius:14px;
+    padding:12px;text-align:center;margin-bottom:15px}
+  .mw-bal .k{font-size:11.5px;color:var(--muted);font-weight:600}
+  .mw-bal .v{font-size:25px;font-weight:800;color:var(--green);margin-top:2px;letter-spacing:-.02em}
+  .mw-row{display:flex;gap:8px;align-items:stretch}
+  .mw-row .inp{flex:1;min-width:0}
+  .mw-go{width:54px;border-radius:12px;font-size:19px;font-weight:800;color:#fff;flex-shrink:0}
+  .mw-go.add{background:var(--green)}
+  .mw-go.rem{background:var(--red)}
+  .mw-go:active{filter:brightness(.9)}
+  .mw-lbl{font-size:11.5px;font-weight:700;color:var(--muted);margin:2px 0 7px 2px;text-transform:uppercase;letter-spacing:.04em}
+  .mw-mov{display:flex;align-items:center;gap:9px;padding:8px 10px;background:var(--surface-2);
+    border:1px solid var(--border);border-radius:11px;margin-bottom:6px}
+  .mw-mov .mv-d{font-size:12px;color:var(--muted);font-weight:600}
+  .mw-mov .mv-t{font-size:12.5px;font-weight:600;flex:1;min-width:0;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap}
+  .mw-mov .mv-v{font-size:13.5px;font-weight:800;margin-left:auto}
+  .mw-mov .mv-v.add{color:var(--green)}
+  .mw-mov .mv-v.rem{color:var(--red)}
+  .mw-mov .mv-x{width:26px;height:26px;border-radius:8px;font-size:12px;color:var(--faint);flex-shrink:0}
+  .mw-mov .mv-x:active{background:var(--red-soft);color:var(--red)}
+
   .eye{background:rgba(255,255,255,.08);border-radius:8px;width:34px;height:34px;display:grid;
     place-items:center;font-size:15px;position:relative;z-index:3;cursor:pointer}
   .eye:active{background:rgba(255,255,255,.2);transform:scale(.94)}
@@ -517,6 +561,36 @@
   </button>
 </div>
 
+<!-- Janelinha da poupança -->
+<div class="mw-back" id="savingsBack"></div>
+<div class="mw" id="savingsWin">
+  <div class="mw-head">
+    <h3>🐷 Poupança</h3>
+    <button class="mw-x" onclick="closeSavingsModal()">✕</button>
+  </div>
+  <div class="mw-bal">
+    <div class="k">Guardado hoje</div>
+    <div class="v num" id="savingsBalanceView">R$ 0,00</div>
+  </div>
+  <div class="field">
+    <label>Incluir valor</label>
+    <div class="mw-row">
+      <div class="inp"><span>R$</span><input id="savingsAdd" inputmode="decimal" placeholder="0,00"
+        oninput="formatMoneyInput(this)" onkeydown="onSavingsKey(event,'add')"></div>
+      <button class="mw-go add" onclick="applySavingsAdd()">↵</button>
+    </div>
+  </div>
+  <div class="field">
+    <label>Retirar valor</label>
+    <div class="mw-row">
+      <div class="inp"><span>R$</span><input id="savingsRemove" inputmode="decimal" placeholder="0,00"
+        oninput="formatMoneyInput(this)" onkeydown="onSavingsKey(event,'remove')"></div>
+      <button class="mw-go rem" onclick="applySavingsRemove()">↵</button>
+    </div>
+  </div>
+  <div id="savingsMoves"></div>
+</div>
+
 <!-- Full-screen forms mount here -->
 <div id="formMount"></div>
 
@@ -580,14 +654,27 @@ const SUGGESTED_SOURCE={ Mercado:'Vale Alimentação', Transporte:'Vale Transpor
 const INCOME_TARGET_WALLET={ 'Salário':'banco', 'R$ Extras':'banco', 'Vale Alimentação':'va', 'Vale Transporte':'vt' };
 /* Carteiras de benefício não entram no Saldo Total */
 const BENEFIT_WALLETS=['va','vt'];
-/* Despesa: categorias que abrem o seletor "Descontar de" */
+/* A poupança não é uma carteira: é um dinheiro guardado à parte, com
+   saldo próprio. Aqui ela ganha um código só para marcar de onde saiu
+   uma despesa paga com ela. */
+const SAVINGS_WALLET='poup';
+/* Despesa: categorias que também podem ser pagas com vale */
 const EXPENSES_WITH_SOURCE=['Mercado','Transporte','Combustível'];
+/* De onde sai o dinheiro de uma despesa. */
 const PAYMENT_SOURCES=[
-  {key:'sal',     label:'💼 Salário normal',   wallet:'banco'},
-  {key:'ext',     label:'✨ Extras',           wallet:'banco'},
-  {key:'valim',   label:'🍽️ Vale Alimentação', wallet:'va'},
-  {key:'vtransp', label:'🚌 Vale Transporte',  wallet:'vt'}
+  {key:'sal',     label:'💼 Salário + renda extra', wallet:'banco'},
+  {key:'poup',    label:'🐷 Poupança',              wallet:SAVINGS_WALLET},
+  {key:'valim',   label:'🍽️ Vale Alimentação',      wallet:'va'},
+  {key:'vtransp', label:'🚌 Vale Transporte',       wallet:'vt'}
 ];
+/* Lançamentos antigos gravaram a origem "ext" (extras), que saía da
+   mesma conta do salário. Ela continua sendo entendida aqui para as
+   despesas antigas não perderem a legenda. */
+const LEGACY_SOURCES={ext:{key:'ext',label:'✨ Extras',wallet:'banco'}};
+// Devolve a origem de pagamento pelo código gravado na despesa.
+function paymentSource(key){
+  return PAYMENT_SOURCES.find(o=>o.key===key) || LEGACY_SOURCES[key] || PAYMENT_SOURCES[0];
+}
 
 /* Estrutura inicial usada na primeira vez que o app abre. */
 // Estrutura inicial usada na primeira vez que o app abre.
@@ -604,7 +691,8 @@ function createInitialData(){
       w('vt','Vale Transporte','🚌','#f59e0b',0,'Benefício'),
     ],
     transactions:[],
-    goals:[]
+    goals:[],
+    savings:{balance:0,history:[]}   // poupança: saldo e movimentos próprios
   };
 }
 // Gera um identificador curto para transações, metas e carteiras.
@@ -612,6 +700,21 @@ function newId(){return Date.now().toString(36)+Math.random().toString(36).slice
 
 
 let state = storage.load() || createInitialData();
+
+/* Completa campos que não existiam nas versões anteriores.
+
+   Observação:
+   Quem já usa o app tem no aparelho um estado salvo sem a poupança.
+   Sem esta checagem o app quebraria na primeira tela ao tentar ler um
+   campo que não existe naquele arquivo antigo. */
+function ensureStateShape(){
+  if(!state.settings) state.settings={theme:'light',hideValues:false};
+  if(!state.savings) state.savings={balance:0,history:[]};
+  if(typeof state.savings.balance!=='number') state.savings.balance=0;
+  if(!Array.isArray(state.savings.history)) state.savings.history=[];
+}
+ensureStateShape();
+
 // Grava o estado atual no aparelho.
 function saveState(){ storage.save(state); }
 
@@ -640,6 +743,11 @@ function colorFromText(s){ let h=0; for(let i=0;i<s.length;i++) h=s.charCodeAt(i
   const p=['#ef4444','#f59e0b','#10b981','#3b82f6','#8b5cf6','#ec4899','#14b8a6','#f97316','#6366f1','#eab308'];
   return p[Math.abs(h)%p.length]; }
 const findWallet = id => state.wallets.find(w=>w.id===id);
+/* Nome e emoji de onde o dinheiro saiu. A poupança não é carteira, mas
+   precisa aparecer nas listas como se fosse. */
+function moneySource(id){
+  return id===SAVINGS_WALLET ? {id:SAVINGS_WALLET,name:'Poupança',emoji:'🐷'} : findWallet(id);
+}
 const formatDayMonth = iso => { const [y,m,d]=iso.split('-'); return `${d}/${m}`; };
 const toMonthKey = iso => iso.slice(0,7);
 const MONTH_NAMES=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
@@ -651,6 +759,7 @@ function greetingText(){ const h=new Date().getHours(); return h<12?'Bom dia':h<
 function monthSummary(mk=currentMonth()){
   let inc=0,exp=0;
   state.transactions.forEach(x=>{ if(toMonthKey(x.date)!==mk) return;
+    if(x.wallet===SAVINGS_WALLET) return;   // pago com a poupança: fora do mês
     const isVale=BENEFIT_WALLETS.includes(x.wallet);
     if(x.type==='receita'){ if(!isVale) inc+=x.amount; }
     else if(x.type==='despesa'){ if(!isVale) exp+=x.amount; }
@@ -662,6 +771,7 @@ function monthSummary(mk=currentMonth()){
 function overallSummary(){
   let inc=0,exp=0,foodIn=0,foodOut=0,trIn=0,trOut=0;
   state.transactions.forEach(x=>{
+    if(x.wallet===SAVINGS_WALLET) return;   // pago com a poupança: não é despesa do salário
     const food=(x.wallet==='va'||x.wallet==='vr'), tr=(x.wallet==='vt');
     if(x.type==='receita'){ food?foodIn+=x.amount: tr?trIn+=x.amount: inc+=x.amount; }
     else if(x.type==='despesa'){ food?foodOut+=x.amount: tr?trOut+=x.amount: exp+=x.amount; }
@@ -679,6 +789,25 @@ function totalBalance(){ return state.wallets.reduce((s,w)=> BENEFIT_WALLETS.inc
 function foodBenefitBalance(){ const va=findWallet('va'); return va?va.balance:0; }
 // Saldo atual do vale-transporte.
 function transportBenefitBalance(){ const vt=findWallet('vt'); return vt?vt.balance:0; }
+
+/* ---------------------------------------------------------------
+   POUPANÇA
+
+   Observação:
+   A poupança tem saldo e histórico próprios, fora da lista de
+   transações. Guardar dinheiro não é receita nem despesa: se entrasse
+   como despesa, o mês fecharia com um gasto que nunca existiu e o
+   gráfico de categorias ficaria torto. Por isso ela é um contador
+   separado, que só cresce quando a pessoa inclui e só diminui quando
+   ela retira.
+   --------------------------------------------------------------- */
+// Quanto está guardado hoje.
+function savingsBalance(){ return (state.savings && state.savings.balance) || 0; }
+
+// Anota o movimento no histórico da poupança.
+function pushSavingsMovement(kind,amount){
+  state.savings.history.unshift({id:newId(),date:new Date().toISOString().slice(0,10),kind,amount});
+}
 
 /* Aviso rápido que aparece e some sozinho no rodapé. */
 let toastTimer;
@@ -761,6 +890,13 @@ function renderHome(){
         <button class="eye" onclick="toggleHiddenValues()">${state.settings.hideValues?'🙈':'👁️'}</button>
       </div>
       <div class="val num">${money(totalBalance())}</div>
+      <div class="pig">
+        <div class="pig-k">Poupança</div>
+        <div class="pig-line">
+          <span class="pig-v num">${money(savingsBalance())}</span>
+          <button class="pig-btn" onclick="openSavingsModal()">＋</button>
+        </div>
+      </div>
       <button class="hist-btn" onclick="showScreen('historico')">📊 Histórico Geral</button>
       <button class="hist-btn" style="margin-top:8px" onclick="showScreen('meses')">📅 Histórico dos Meses</button>
     </div>
@@ -887,6 +1023,7 @@ function expensesByCategory(mk=currentMonth()){
   const map={};
   state.transactions.forEach(x=>{ if(x.type!=='despesa'||toMonthKey(x.date)!==mk) return;
     if(BENEFIT_WALLETS.includes(x.wallet)) return;  // pago com vale: não entra no gráfico
+    if(x.wallet===SAVINGS_WALLET) return;          // pago com a poupança: também não entra
     map[x.cat]=(map[x.cat]||0)+x.amount; });
   return Object.entries(map).map(([cat,val])=>({cat,val,c:categoryInfo('despesa',cat).c}))
     .sort((a,b)=>b.val-a.val);
@@ -987,9 +1124,10 @@ function transactionRow(x){
   const isTr = x.type==='transferencia';
   const isInv= x.type==='investimento';
   const info = isTr?{e:'🔄',c:'#2563eb'} : isInv?{e:'📈',c:'#7c3aed'} : categoryInfo(x.type,x.cat);
-  const w=findWallet(x.wallet);
+  const w=moneySource(x.wallet);
   let sub;
   if(isTr){ const tw=findWallet(x.toWallet); sub=`${formatDayMonth(x.date)} · ${w?w.name:''} → ${tw?tw.name:''}`; }
+  else if(x.wallet===SAVINGS_WALLET) sub=`${formatDayMonth(x.date)} · ${x.cat||''} · 🐷 Debitado da poupança`;
   else sub=`${formatDayMonth(x.date)} · ${x.cat||''} · ${w?w.name:''}`;
   const sign = isIn?'+':'-';
   const cls = isIn?'in':'out';
@@ -1019,6 +1157,10 @@ function deleteTransaction(id,ev){ ev.stopPropagation();
    primeiras versões pode ter lançamentos assim salvos, e sem esse
    tratamento o saldo ficaria errado ao apagá-los. */
 function undoWalletEffect(x){
+  if(x.wallet===SAVINGS_WALLET){                       // despesa paga com a poupança
+    if(x.type==='despesa') state.savings.balance+=x.amount;
+    return;
+  }
   const w=findWallet(x.wallet);
   if(x.type==='receita' && w) w.balance-=x.amount;
   if((x.type==='despesa'||x.type==='investimento') && w) w.balance+=x.amount;
@@ -1029,7 +1171,7 @@ function undoWalletEffect(x){
 /* linha de transação só-leitura (para a lista de Entradas) */
 // Linha de transação sem o botão de excluir (listas só de leitura).
 function transactionRowCompact(x){
-  const isIn=x.type==='receita'; const info=categoryInfo(x.type,x.cat); const w=findWallet(x.wallet);
+  const isIn=x.type==='receita'; const info=categoryInfo(x.type,x.cat); const w=moneySource(x.wallet);
   const sub=`${formatDayMonth(x.date)} · ${x.cat||''}${w?' · '+w.name:''}`;
   return `<div class="tx-row">
     <div class="tx-ic" style="background:${hexToRgba(info.c,.14)}">${info.e}</div>
@@ -1053,6 +1195,7 @@ function renderFilteredList(){
   const mk=currentMonth(), mes=MONTH_NAMES[new Date().getMonth()];
   const isDesp=listKind==='despesas'; const type=isDesp?'despesa':'receita';
   let list=state.transactions.filter(x=>x.type===type && toMonthKey(x.date)===mk);
+  list=list.filter(x=>x.wallet!==SAVINGS_WALLET);  // o que saiu da poupança tem lugar próprio
   if(!isDesp) list=list.filter(x=>!BENEFIT_WALLETS.includes(x.wallet)); // Entradas = salário+extras
   list.sort((a,b)=>b.date.localeCompare(a.date));
   const total=list.reduce((s,x)=>s+x.amount,0);
@@ -1119,6 +1262,7 @@ function shortMonth(mk){ const [y,mo]=mk.split('-'); return MONTH_NAMES[+mo-1].s
 function summaryForMonth(mk){
   let inc=0,exp=0,foodIn=0,foodOut=0,trIn=0,trOut=0;
   state.transactions.forEach(x=>{ if(toMonthKey(x.date)!==mk) return;
+    if(x.wallet===SAVINGS_WALLET) return;   // pago com a poupança: fora do mês
     const food=(x.wallet==='va'), tr=(x.wallet==='vt');
     if(x.type==='receita'){ food?foodIn+=x.amount: tr?trIn+=x.amount: inc+=x.amount; }
     else if(x.type==='despesa'){ food?foodOut+=x.amount: tr?trOut+=x.amount: exp+=x.amount; }
@@ -1831,29 +1975,51 @@ function clearEntryFields(type){
   blk.innerHTML=entryFieldsHtml(type);
   setupEntryFields(type);
 }
-/* mostra "Descontar de" / "Nome" conforme a categoria (despesa) */
+/* Mostra "Descontar de" / "Nome" conforme a categoria (despesa) e
+   "De onde veio" quando a entrada é um extra.
+
+   Observação:
+   Tanto "R$ Extras" quanto "Outros" são categorias guarda-chuva: o nome
+   delas não diz nada sobre o lançamento. Sem esse campo, meses depois a
+   lista vira uma fileira de "R$ Extras" iguais e não dá para saber qual
+   foi a venda de canecas e qual foi o freela. */
 // Mostra os campos extras que a categoria escolhida exige.
 function onCategoryChange(sel,type){
-  if(type!=='despesa') return;
   const blk=sel.closest('.entry-row'); const extra=blk.querySelector('[data-role=extra]'); const cat=sel.value;
-  if(EXPENSES_WITH_SOURCE.includes(cat)){
-    const opts=PAYMENT_SOURCES.map(o=>`<option value="${o.key}">${o.label}</option>`).join('');
-    extra.innerHTML=`<div class="field"><label>Descontar de</label>
+  if(type==='receita'){
+    if(cat==='R$ Extras'){
+      extra.innerHTML=`<div class="field"><label>De onde veio esse extra</label>
+        <div class="inp"><input data-role="custom" placeholder="Ex: Venda de canecas, freela, venda do vale..."></div></div>`;
+    } else { extra.innerHTML=''; }
+    return;
+  }
+  if(type!=='despesa') return;
+  /* Toda despesa pergunta de onde sai o dinheiro. As categorias que
+     costumam ser pagas com vale mostram também as duas carteiras de
+     benefício; as outras ficam só com salário e poupança. */
+  const aceitaVale=EXPENSES_WITH_SOURCE.includes(cat);
+  const fontes=aceitaVale?PAYMENT_SOURCES:PAYMENT_SOURCES.filter(o=>!BENEFIT_WALLETS.includes(o.wallet));
+  const opts=fontes.map(o=>`<option value="${o.key}">${o.label}</option>`).join('');
+  const campoNome = cat==='Outros'
+    ? `<div class="field"><label>Nome da despesa (aparece no gráfico)</label>
+        <div class="inp"><input data-role="custom" placeholder="Ex: Presente, Pet, Doação..."></div></div>`
+    : '';
+  extra.innerHTML=campoNome+`<div class="field"><label>De onde vai sair esse dinheiro</label>
       <div class="inp"><select data-role="src" onchange="onSourceChange(this)">${opts}</select></div></div>
       <div data-role="hint"></div>`;
-    const src=extra.querySelector('[data-role=src]');
-    if(cat==='Mercado') src.value='valim';
-    else if(cat==='Transporte') src.value='vtransp';
-    onSourceChange(src);
-  } else if(cat==='Outros'){
-    extra.innerHTML=`<div class="field"><label>Nome da despesa (aparece no gráfico)</label>
-      <div class="inp"><input data-role="custom" placeholder="Ex: Presente, Pet, Doação..."></div></div>`;
-  } else { extra.innerHTML=''; }
+  const src=extra.querySelector('[data-role=src]');
+  if(cat==='Mercado') src.value='valim';
+  else if(cat==='Transporte') src.value='vtransp';
+  onSourceChange(src);
 }
 // Mostra o saldo disponível da origem escolhida.
 function onSourceChange(sel){
   const extra=sel.closest('[data-role=extra]'); const hint=extra.querySelector('[data-role=hint]'); if(!hint) return;
-  const opt=PAYMENT_SOURCES.find(o=>o.key===sel.value); const benefit=BENEFIT_WALLETS.includes(opt.wallet);
+  const opt=paymentSource(sel.value); const benefit=BENEFIT_WALLETS.includes(opt.wallet);
+  if(opt.wallet===SAVINGS_WALLET){
+    hint.innerHTML=`<div class="suggest" style="background:rgba(13,148,136,.14);color:#0d9488">🐷 Sai da poupança — <b style="margin:0 3px">não</b> entra nas despesas do mês nem no gráfico. Guardado hoje: ${money(savingsBalance())}</div>`;
+    return;
+  }
   hint.innerHTML = benefit
     ? `<div class="suggest">✅ Pago com vale — <b style="margin:0 3px">não</b> desconta do seu saldo total.</div>`
     : `<div class="suggest" style="background:var(--blue-soft);color:var(--blue)">💠 Desconta do seu saldo (conta).</div>`;
@@ -1866,16 +2032,29 @@ function readEntryFields(type){
   const cat=catSel.value;
   const valEl=blk.querySelector('[data-role=val]');
   const val=parseAmount(valEl?valEl.value:'');
-  let src=null, name=cat, wallet;
-  if(type==='receita'){ wallet=INCOME_TARGET_WALLET[cat]||'banco'; }
-  else if(EXPENSES_WITH_SOURCE.includes(cat)){
+  let src=null, name=cat, wallet, origin=null;
+  if(type==='receita'){ wallet=INCOME_TARGET_WALLET[cat]||'banco';
+    if(cat==='R$ Extras'){ const c=blk.querySelector('[data-role=custom]'); if(c&&c.value.trim()) origin=c.value.trim(); }
+  }
+  else {
     const s=blk.querySelector('[data-role=src]'); src=s?s.value:'sal';
-    const opt=PAYMENT_SOURCES.find(o=>o.key===src); wallet=opt?opt.wallet:'banco';
-  } else if(cat==='Outros'){
-    const c=blk.querySelector('[data-role=custom]'); if(c&&c.value.trim()) name=c.value.trim(); wallet='banco';
-  } else { wallet='banco'; }
+    wallet=paymentSource(src).wallet;
+    if(cat==='Outros'){ const c=blk.querySelector('[data-role=custom]'); if(c&&c.value.trim()) name=c.value.trim(); }
+  }
   const noteEl=document.getElementById('fNote'); const note=noteEl&&noteEl.value.trim()?noteEl.value.trim():null;
-  return {cat,val,src,name,wallet,note};
+  return {cat,val,src,name,wallet,note,origin};
+}
+
+/* Nome que aparece na lista.
+
+   Observação:
+   Só a categoria não basta em dois casos: entrada de "R$ Extras" e
+   despesa de "Outros". Nesses dois o que foi escrito à mão vai junto,
+   grudado no nome da categoria, para a linha fazer sentido meses depois. */
+function entryDisplayName(type,it){
+  if(type==='receita') return it.origin ? `${it.cat} — ${it.origin}` : it.cat;
+  if(it.cat==='Outros' && it.name && it.name!=='Outros') return `Outros — ${it.name}`;
+  return it.name;
 }
 /* adiciona o item à lista abaixo e limpa o bloco pro próximo */
 // Põe o lançamento atual na lista temporária.
@@ -1898,12 +2077,12 @@ function renderPendingItems(type){
   box.innerHTML=head+pendingItems.map((it,i)=>{
     const info=categoryInfo(type,it.cat);
     const emoji=(type==='despesa'&&it.cat==='Outros')?'📦':info.e;
-    const srcTxt=it.src?('· '+((PAYMENT_SOURCES.find(o=>o.key===it.src)||{}).label||'').replace(/^\S+\s/,'')):'';
+    const srcTxt=it.src?('· '+paymentSource(it.src).label.replace(/^\S+\s/,'')):'';
     const sub=it.note?('📝 '+it.note):srcTxt;
     const v=it.val.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
     return `<div class="litem">
       <div class="li-ic" style="background:${hexToRgba(info.c,.14)};color:${info.c}">${emoji}</div>
-      <div class="li-main"><div class="li-name">${it.name}</div>${sub?`<div class="li-sub">${sub}</div>`:''}</div>
+      <div class="li-main"><div class="li-name">${entryDisplayName(type,it)}</div>${sub?`<div class="li-sub">${sub}</div>`:''}</div>
       <div class="li-val"><span>R$</span><input inputmode="decimal" value="${v}" oninput="formatMoneyInput(this);updatePendingValue(${i},this,'${type}')"></div>
       <button type="button" class="li-del" title="Remover" onclick="removePendingItem(${i},'${type}')">🗑</button>
     </div>`;
@@ -1935,17 +2114,22 @@ function savePendingEntries(type){
     pendingItems.push(cur);
   }
   if(!pendingItems.length){ showToast('Adicione ao menos um item'); return; }
+  /* Não dá para gastar da poupança mais do que está guardado nela. */
+  const daPoupanca=pendingItems.filter(it=>it.wallet===SAVINGS_WALLET).reduce((sum,it)=>sum+it.val,0);
+  if(daPoupanca>savingsBalance()){ showToast('A poupança tem '+money(savingsBalance())); return; }
   const date=(document.getElementById('fDate').value)||new Date().toISOString().slice(0,10);
   const n=pendingItems.length;
   pendingItems.forEach(it=>{
     const w=findWallet(it.wallet);
     if(type==='receita'){
       if(w) w.balance+=it.val;
-      const tx={id:newId(),type:'receita',cat:it.cat,desc:it.name,amount:it.val,date,wallet:it.wallet};
+      const tx={id:newId(),type:'receita',cat:it.cat,desc:entryDisplayName('receita',it),amount:it.val,date,wallet:it.wallet};
+      if(it.origin) tx.origin=it.origin;
       if(it.note) tx.note=it.note; state.transactions.push(tx);
     } else {
-      if(w) w.balance-=it.val;
-      const tx={id:newId(),type:'despesa',cat:it.name,desc:it.name,amount:it.val,date,wallet:it.wallet};
+      if(it.wallet===SAVINGS_WALLET) state.savings.balance-=it.val;   // sai do dinheiro guardado
+      else if(w) w.balance-=it.val;
+      const tx={id:newId(),type:'despesa',cat:it.name,desc:entryDisplayName('despesa',it),amount:it.val,date,wallet:it.wallet};
       if(it.note) tx.note=it.note; if(it.src) tx.src=it.src; state.transactions.push(tx);
     }
   });
@@ -1970,7 +2154,7 @@ function renderSavedEntries(type){
   const titulo=type==='receita'?`Entradas salvas · ${mes}`:`Despesas salvas · ${mes}`;
   box.innerHTML=`<div class="saved-head">${titulo} (${list.length})</div>`+list.map(x=>{
     const info=categoryInfo(type,x.cat);
-    const srcTxt=x.src?((PAYMENT_SOURCES.find(o=>o.key===x.src)||{}).label||'').replace(/^\S+\s/,''):'';
+    const srcTxt=x.src?paymentSource(x.src).label.replace(/^\S+\s/,''):'';
     const sub=x.note?('📝 '+x.note):srcTxt;
     return `<div class="litem">
       <div class="li-ic" style="background:${hexToRgba(info.c,.14)};color:${info.c}">${info.e}</div>
@@ -2006,10 +2190,13 @@ function editSavedEntry(id,type){
       const known=Object.keys(EXPENSE_CATEGORIES).includes(x.cat);
       const cat = known ? x.cat : 'Outros';
       catSel.value=cat; onCategoryChange(catSel,type);
-      if(EXPENSES_WITH_SOURCE.includes(cat) && x.src){ const s=blk.querySelector('[data-role=src]'); if(s){ s.value=x.src; onSourceChange(s);} }
-      else if(cat==='Outros'){ const c=blk.querySelector('[data-role=custom]'); if(c) c.value=x.cat; }
+      if(cat==='Outros'){ const c=blk.querySelector('[data-role=custom]'); if(c) c.value=x.cat; }
+      if(x.src){ const s=blk.querySelector('[data-role=src]');
+        if(s && Array.prototype.some.call(s.options,o=>o.value===x.src)){ s.value=x.src; onSourceChange(s); } }
     } else {
       catSel.value=Object.keys(INCOME_CATEGORIES).includes(x.cat)?x.cat:'Salário';
+      onCategoryChange(catSel,type);
+      if(catSel.value==='R$ Extras' && x.origin){ const c=blk.querySelector('[data-role=custom]'); if(c) c.value=x.origin; }
     }
     const valEl=blk.querySelector('[data-role=val]');
     if(valEl){ valEl.value=x.amount.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}); }
@@ -2174,7 +2361,7 @@ function exportData(){
 // Restaura os dados a partir de um arquivo de backup.
 function importData(ev){ const f=ev.target.files[0]; if(!f) return;
   const rd=new FileReader(); rd.onload=()=>{ try{ const d=JSON.parse(rd.result);
-    if(d.wallets&&d.transactions){ state=d; if(!state.settings)state.settings={theme:'light',hideValues:false};
+    if(d.wallets&&d.transactions){ state=d; ensureStateShape();
       applyTheme(); saveState(); renderAll(); showToast('Backup importado ✅'); }
     else showToast('Arquivo inválido'); }catch(e){ showToast('Não foi possível ler o arquivo'); } };
   rd.readAsText(f); ev.target.value='';
@@ -2226,6 +2413,100 @@ function applyGoBack(){ const prev=screenHistory.pop()||'inicio'; showScreen(pre
 // Redesenha a tela atual, depois de mexer nos dados.
 function renderAll(){
   (SCREEN_RENDERERS[currentScreen]||renderHome)();
+}
+
+/* ============================================================
+   Janelinha da poupança
+
+   Observação:
+   Ficou como janela e não como tela inteira de propósito: incluir ou
+   retirar um valor é coisa de dois toques, e sair da tela inicial só
+   para isso quebrava o ritmo. O saldo continua à vista atrás dela.
+   ============================================================ */
+let savingsHistoryEntry=false;
+
+// Abre a janelinha da poupança.
+function openSavingsModal(){
+  document.getElementById('savingsBack').classList.add('show');
+  document.getElementById('savingsWin').classList.add('show');
+  const add=document.getElementById('savingsAdd'), rem=document.getElementById('savingsRemove');
+  if(add) add.value=''; if(rem) rem.value='';
+  renderSavingsModal();
+  pushHistoryEntry(); savingsHistoryEntry=true;
+  setTimeout(()=>{ if(add) add.focus(); },260);
+}
+// Só esconde a janelinha, sem mexer no histórico.
+function hideSavingsModal(){
+  document.getElementById('savingsBack').classList.remove('show');
+  document.getElementById('savingsWin').classList.remove('show');
+}
+// Fecha a pedido de quem usa (botão ✕ ou toque fora).
+function closeSavingsModal(){
+  hideSavingsModal();
+  if(savingsHistoryEntry){ savingsHistoryEntry=false; if(!nativeBackButton && historyDepth>0) history.back(); }
+}
+// Atualiza o saldo e a lista dentro da janelinha.
+function renderSavingsModal(){
+  const v=document.getElementById('savingsBalanceView');
+  if(v) v.textContent=money(savingsBalance());
+  const box=document.getElementById('savingsMoves'); if(!box) return;
+  /* A lista junta o que foi incluído e retirado à mão com as despesas
+     que foram pagas com a poupança — as três coisas mexem no valor
+     guardado, então precisam aparecer no mesmo lugar. */
+  const manuais=(state.savings.history||[]).map(m=>({
+    id:m.id, date:m.date, out:(m.kind==='saida'), amount:m.amount,
+    label:(m.kind==='saida'?'Retirado':'Incluído'), removable:true }));
+  const despesas=state.transactions
+    .filter(x=>x.type==='despesa' && x.wallet===SAVINGS_WALLET)
+    .map(x=>({ id:x.id, date:x.date, out:true, amount:x.amount,
+      label:'Despesa · '+(x.desc||x.cat), removable:false }));
+  const list=manuais.concat(despesas).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,6);
+  if(!list.length){ box.innerHTML=''; return; }
+  box.innerHTML='<div class="mw-lbl">Últimos movimentos</div>'+list.map(m=>`<div class="mw-mov">
+      <span class="mv-d">${formatDayMonth(m.date)}</span>
+      <span class="mv-t">${m.label}</span>
+      <span class="mv-v num ${m.out?'rem':'add'}">${m.out?'-':'+'}${money(m.amount)}</span>
+      ${m.removable?`<button class="mv-x" onclick="deleteSavingsMovement('${m.id}')">🗑</button>`
+                   :'<span class="mv-x" style="opacity:.35">🔒</span>'}
+    </div>`).join('');
+}
+// Tecla Enter nos campos faz o mesmo que o botão ao lado.
+function onSavingsKey(ev,campo){
+  if(ev.key!=='Enter') return;
+  ev.preventDefault();
+  if(campo==='add') applySavingsAdd(); else applySavingsRemove();
+}
+// Soma o valor digitado à poupança.
+function applySavingsAdd(){
+  const el=document.getElementById('savingsAdd'); if(!el) return;
+  const n=parseAmount(el.value);
+  if(!(n>0)){ showToast('Digite um valor maior que zero'); el.focus(); return; }
+  state.savings.balance+=n;
+  pushSavingsMovement('entrada',n);
+  saveState(); el.value=''; el.blur();
+  renderSavingsModal(); renderAll();
+  showToast('Incluído na poupança 🐷');
+}
+// Tira o valor digitado da poupança.
+function applySavingsRemove(){
+  const el=document.getElementById('savingsRemove'); if(!el) return;
+  const n=parseAmount(el.value);
+  if(!(n>0)){ showToast('Digite um valor maior que zero'); el.focus(); return; }
+  if(n>savingsBalance()){ showToast('Você tem '+money(savingsBalance())+' guardado'); el.focus(); return; }
+  state.savings.balance-=n;
+  pushSavingsMovement('saida',n);
+  saveState(); el.value=''; el.blur();
+  renderSavingsModal(); renderAll();
+  showToast('Retirado da poupança 📤');
+}
+// Apaga um movimento e devolve a poupança ao valor de antes.
+function deleteSavingsMovement(id){
+  const m=(state.savings.history||[]).find(x=>x.id===id); if(!m) return;
+  if(!confirm('Excluir este movimento? A poupança volta ao valor de antes.')) return;
+  state.savings.balance += (m.kind==='saida' ? m.amount : -m.amount);
+  if(state.savings.balance<0) state.savings.balance=0;
+  state.savings.history=state.savings.history.filter(x=>x.id!==id);
+  saveState(); renderSavingsModal(); renderAll(); showToast('Movimento excluído');
 }
 
 /* Menu do botão + (canto inferior). */
@@ -2284,6 +2565,8 @@ function pushHistoryEntry(){
    Devolve true quando fechou alguma coisa — assim quem chamou sabe
    que o toque no voltar já foi usado e não deve trocar de tela. */
 function closeTopLayer(){
+  const savingsWin=document.getElementById('savingsWin');
+  if(savingsWin && savingsWin.classList.contains('show')){ hideSavingsModal(); savingsHistoryEntry=false; return true; }
   const fabMenu=document.getElementById('fabMenu');
   if(fabMenu && fabMenu.classList.contains('show')){ hideFab(); fabHistoryEntry=false; return true; }
   if(document.querySelector('.form-screen')){ applyCloseForm(); return true; }
@@ -2339,6 +2622,7 @@ function startApp(){
   document.querySelectorAll('.nav-btn').forEach(b=>b.onclick=()=>showScreen(b.dataset.nav));
   document.getElementById('fab').onclick=openFab;
   document.getElementById('overlay').onclick=closeFab;
+  document.getElementById('savingsBack').onclick=closeSavingsModal;
   document.querySelectorAll('.fm-item').forEach(b=>b.onclick=()=>openForm(b.dataset.form));
   // extra nav targets (metas/investir/carteiras) via header buttons already wired inline
   showScreen('inicio');
@@ -2388,6 +2672,12 @@ window.updateInvestmentResults = updateInvestmentResults;
 window.updateCryptoResults = updateCryptoResults;
 window.selectCoin = selectCoin;
 window.setTermInYears = setTermInYears;
+window.openSavingsModal = openSavingsModal;
+window.closeSavingsModal = closeSavingsModal;
+window.applySavingsAdd = applySavingsAdd;
+window.applySavingsRemove = applySavingsRemove;
+window.deleteSavingsMovement = deleteSavingsMovement;
+window.onSavingsKey = onSavingsKey;
 
 
 if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',startApp);}else{startApp();}
