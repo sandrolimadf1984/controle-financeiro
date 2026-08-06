@@ -93,6 +93,14 @@
   .hero .lbl{font-size:12.5px;color:#94a3b8;display:flex;align-items:center;gap:6px}
   .hero .val{font-size:34px;font-weight:800;margin:6px 0 2px;letter-spacing:-.02em}
   .hero .sub{font-size:12.5px;color:#cbd5e1}
+  /* Botão de enviar para a poupança, colado no saldo */
+  .hero .val-line{display:flex;align-items:center;gap:10px;position:relative;z-index:3}
+  .hero .send-btn{width:27px;height:27px;border-radius:50%;font-size:14px;font-weight:800;line-height:1;
+    color:#fff;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.34);
+    display:grid;place-items:center;flex-shrink:0}
+  .hero .send-btn:active{background:rgba(255,255,255,.28);transform:scale(.92)}
+  .mw-hint{font-size:12px;color:var(--muted);line-height:1.45;margin-top:2px}
+
   /* Poupança dentro do cartão de saldo */
   .hero .pig{position:relative;z-index:3;margin-top:2px}
   .hero .pig-k{font-size:12.5px;font-weight:700;color:#22c55e}
@@ -591,6 +599,30 @@
   <div id="savingsMoves"></div>
 </div>
 
+<!-- Janelinha de enviar para a poupança -->
+<div class="mw-back" id="sendBack"></div>
+<div class="mw" id="sendWin">
+  <div class="mw-head">
+    <h3>↗ Enviar para a poupança</h3>
+    <button class="mw-x" onclick="closeSendModal()">✕</button>
+  </div>
+  <div class="mw-bal">
+    <div class="k">Disponível no seu saldo</div>
+    <div class="v num" id="sendAvailable">R$ 0,00</div>
+  </div>
+  <div class="field">
+    <label>Quanto você quer enviar</label>
+    <div class="mw-row">
+      <div class="inp"><span>R$</span><input id="sendValue" inputmode="decimal" placeholder="0,00"
+        oninput="formatMoneyInput(this)" onkeydown="onSendKey(event)"></div>
+      <button class="mw-go add" onclick="applySendToSavings()">↵</button>
+    </div>
+  </div>
+  <div class="mw-hint">O valor sai do seu saldo e passa a contar como dinheiro guardado.
+    <br>Na poupança hoje: <b id="sendSavings">R$ 0,00</b></div>
+  <div id="sendMoves"></div>
+</div>
+
 <!-- Full-screen forms mount here -->
 <div id="formMount"></div>
 
@@ -776,7 +808,9 @@ function overallSummary(){
     if(x.type==='receita'){ food?foodIn+=x.amount: tr?trIn+=x.amount: inc+=x.amount; }
     else if(x.type==='despesa'){ food?foodOut+=x.amount: tr?trOut+=x.amount: exp+=x.amount; }
   });
-  return {inc,exp,bal:inc-exp,foodIn,foodOut,trIn,trOut};
+  /* O que foi enviado para a poupança saiu do saldo, então sai também
+     daqui — senão esta tela mostraria um total diferente do Início. */
+  return {inc,exp,bal:inc-exp-savingsSentFromBalance(),foodIn,foodOut,trIn,trOut};
 }
 /* Saldo acumulado, sem contar os benefícios.
 
@@ -803,6 +837,17 @@ function transportBenefitBalance(){ const vt=findWallet('vt'); return vt?vt.bala
    --------------------------------------------------------------- */
 // Quanto está guardado hoje.
 function savingsBalance(){ return (state.savings && state.savings.balance) || 0; }
+
+/* Quanto saiu do saldo e virou dinheiro guardado.
+
+   Observação:
+   Só os envios entram nesta conta. Valores incluídos à mão são dinheiro
+   que já estava guardado em outro lugar e nunca passou pela conta, então
+   não podem descontar de nada. */
+function savingsSentFromBalance(){
+  if(!state.savings || !state.savings.history) return 0;
+  return state.savings.history.reduce((sum,m)=> m.kind==='transf'? sum+m.amount : sum, 0);
+}
 
 // Anota o movimento no histórico da poupança.
 function pushSavingsMovement(kind,amount){
@@ -889,7 +934,10 @@ function renderHome(){
         </div>
         <button class="eye" onclick="toggleHiddenValues()">${state.settings.hideValues?'🙈':'👁️'}</button>
       </div>
-      <div class="val num">${money(totalBalance())}</div>
+      <div class="val-line">
+        <div class="val num">${money(totalBalance())}</div>
+        <button class="send-btn" onclick="openSendModal()">↗</button>
+      </div>
       <div class="pig">
         <div class="pig-k">Poupança</div>
         <div class="pig-line">
@@ -1241,6 +1289,10 @@ function renderHistory(){
       <div class="hcard"><div class="hc-k">Entradas totais</div><div class="hc-v num" style="color:var(--green)">${money(a.inc)}</div></div>
       <div class="hcard"><div class="hc-k">Despesas totais</div><div class="hc-v num" style="color:var(--red)">${money(a.exp)}</div></div>
     </div>
+    ${savingsSentFromBalance()>0?`<div class="hist-grid">
+      <div class="hcard"><div class="hc-k">🐷 Enviado para a poupança</div><div class="hc-v num" style="color:#0d9488">${money(savingsSentFromBalance())}</div><div class="hc-s">Saiu do saldo acima</div></div>
+      <div class="hcard"><div class="hc-k">🐷 Guardado hoje</div><div class="hc-v num" style="color:#0d9488">${money(savingsBalance())}</div><div class="hc-s">Total na poupança</div></div>
+    </div>`:''}
     <div class="hist-grid">
       <div class="hcard"><div class="hc-k">🍽️ Vale Alimentação</div><div class="hc-v num" style="color:#f97316">${money(foodBenefitBalance())}</div><div class="hc-s">Recebido ${money(a.foodIn)} · Gasto ${money(a.foodOut)}</div></div>
       <div class="hcard"><div class="hc-k">🚌 Vale Transporte</div><div class="hc-v num" style="color:#f59e0b">${money(transportBenefitBalance())}</div><div class="hc-s">Recebido ${money(a.trIn)} · Gasto ${money(a.trOut)}</div></div>
@@ -2455,7 +2507,7 @@ function renderSavingsModal(){
      guardado, então precisam aparecer no mesmo lugar. */
   const manuais=(state.savings.history||[]).map(m=>({
     id:m.id, date:m.date, out:(m.kind==='saida'), amount:m.amount,
-    label:(m.kind==='saida'?'Retirado':'Incluído'), removable:true }));
+    label:(m.kind==='saida'?'Retirado':m.kind==='transf'?'Enviado do saldo':'Incluído'), removable:true }));
   const despesas=state.transactions
     .filter(x=>x.type==='despesa' && x.wallet===SAVINGS_WALLET)
     .map(x=>({ id:x.id, date:x.date, out:true, amount:x.amount,
@@ -2502,11 +2554,72 @@ function applySavingsRemove(){
 // Apaga um movimento e devolve a poupança ao valor de antes.
 function deleteSavingsMovement(id){
   const m=(state.savings.history||[]).find(x=>x.id===id); if(!m) return;
-  if(!confirm('Excluir este movimento? A poupança volta ao valor de antes.')) return;
+  if(!confirm('Excluir este movimento? Os valores voltam ao que eram antes.')) return;
   state.savings.balance += (m.kind==='saida' ? m.amount : -m.amount);
+  if(m.kind==='transf'){ const w=findWallet('banco'); if(w) w.balance+=m.amount; }  // devolve ao saldo
   if(state.savings.balance<0) state.savings.balance=0;
   state.savings.history=state.savings.history.filter(x=>x.id!==id);
-  saveState(); renderSavingsModal(); renderAll(); showToast('Movimento excluído');
+  saveState(); renderSavingsModal(); renderSendModal(); renderAll(); showToast('Movimento excluído');
+}
+
+/* ============================================================
+   Enviar dinheiro do saldo para a poupança
+
+   Observação:
+   Aqui o dinheiro realmente muda de lugar: sai da conta e vira valor
+   guardado. Por isso o saldo do Início cai na mesma hora. Não é despesa
+   nem receita — o dinheiro continua sendo dele, só que separado.
+   ============================================================ */
+let sendHistoryEntry=false;
+
+// Abre a janelinha de enviar para a poupança.
+function openSendModal(){
+  document.getElementById('sendBack').classList.add('show');
+  document.getElementById('sendWin').classList.add('show');
+  const el=document.getElementById('sendValue'); if(el) el.value='';
+  renderSendModal();
+  pushHistoryEntry(); sendHistoryEntry=true;
+  setTimeout(()=>{ if(el) el.focus(); },260);
+}
+// Só esconde a janelinha, sem mexer no histórico.
+function hideSendModal(){
+  document.getElementById('sendBack').classList.remove('show');
+  document.getElementById('sendWin').classList.remove('show');
+}
+// Fecha a pedido de quem usa (botão ✕ ou toque fora).
+function closeSendModal(){
+  hideSendModal();
+  if(sendHistoryEntry){ sendHistoryEntry=false; if(!nativeBackButton && historyDepth>0) history.back(); }
+}
+// Atualiza os valores mostrados dentro da janelinha.
+function renderSendModal(){
+  const a=document.getElementById('sendAvailable'); if(a) a.textContent=money(totalBalance());
+  const g=document.getElementById('sendSavings'); if(g) g.textContent=money(savingsBalance());
+  const box=document.getElementById('sendMoves'); if(!box) return;
+  const list=(state.savings.history||[]).filter(m=>m.kind==='transf').slice(0,4);
+  box.innerHTML = !list.length ? '' :
+    '<div class="mw-lbl">Últimos envios</div>'+list.map(m=>`<div class="mw-mov">
+      <span class="mv-d">${formatDayMonth(m.date)}</span>
+      <span class="mv-t">Enviado do saldo</span>
+      <span class="mv-v num add">+${money(m.amount)}</span>
+      <button class="mv-x" onclick="deleteSavingsMovement('${m.id}')">🗑</button>
+    </div>`).join('');
+}
+// Tecla Enter no campo faz o mesmo que o botão ao lado.
+function onSendKey(ev){ if(ev.key!=='Enter') return; ev.preventDefault(); applySendToSavings(); }
+// Tira o valor do saldo da conta e guarda na poupança.
+function applySendToSavings(){
+  const el=document.getElementById('sendValue'); if(!el) return;
+  const n=parseAmount(el.value);
+  if(!(n>0)){ showToast('Digite um valor maior que zero'); el.focus(); return; }
+  const disponivel=totalBalance();
+  if(n>disponivel){ showToast('Seu saldo é de '+money(disponivel)); el.focus(); return; }
+  const w=findWallet('banco'); if(w) w.balance-=n;
+  state.savings.balance+=n;
+  pushSavingsMovement('transf',n);
+  saveState(); el.value=''; el.blur();
+  renderSendModal(); renderAll();
+  showToast('Enviado para a poupança 🐷');
 }
 
 /* Menu do botão + (canto inferior). */
@@ -2565,6 +2678,8 @@ function pushHistoryEntry(){
    Devolve true quando fechou alguma coisa — assim quem chamou sabe
    que o toque no voltar já foi usado e não deve trocar de tela. */
 function closeTopLayer(){
+  const sendWin=document.getElementById('sendWin');
+  if(sendWin && sendWin.classList.contains('show')){ hideSendModal(); sendHistoryEntry=false; return true; }
   const savingsWin=document.getElementById('savingsWin');
   if(savingsWin && savingsWin.classList.contains('show')){ hideSavingsModal(); savingsHistoryEntry=false; return true; }
   const fabMenu=document.getElementById('fabMenu');
@@ -2623,6 +2738,7 @@ function startApp(){
   document.getElementById('fab').onclick=openFab;
   document.getElementById('overlay').onclick=closeFab;
   document.getElementById('savingsBack').onclick=closeSavingsModal;
+  document.getElementById('sendBack').onclick=closeSendModal;
   document.querySelectorAll('.fm-item').forEach(b=>b.onclick=()=>openForm(b.dataset.form));
   // extra nav targets (metas/investir/carteiras) via header buttons already wired inline
   showScreen('inicio');
@@ -2673,6 +2789,10 @@ window.updateCryptoResults = updateCryptoResults;
 window.selectCoin = selectCoin;
 window.setTermInYears = setTermInYears;
 window.openSavingsModal = openSavingsModal;
+window.openSendModal = openSendModal;
+window.closeSendModal = closeSendModal;
+window.applySendToSavings = applySendToSavings;
+window.onSendKey = onSendKey;
 window.closeSavingsModal = closeSavingsModal;
 window.applySavingsAdd = applySavingsAdd;
 window.applySavingsRemove = applySavingsRemove;
